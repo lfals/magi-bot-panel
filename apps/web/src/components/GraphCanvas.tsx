@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -15,17 +16,16 @@ import {
 import {
   displayNameForAgent,
   displayRoleForAgent,
-  dmApiChannelId,
   isGroupChannelId,
   layoutSlug,
   resolveApiChannelId,
 } from '../layout/agentMap'
 import {
-  DM_EDGE_PAIRS,
   dmCurve,
   groupCurveSegs,
   inputPort,
   outputPort,
+  type NodePos,
 } from '../layout/edgeGeometry'
 import { useNodePositions } from '../hooks/useNodePositions'
 
@@ -38,17 +38,98 @@ type Props = {
   onSelectAgent: (agentId: string, channelId: string) => void
 }
 
-/** Resolve aresta da API (channel_id UUID:UUID ou group uuid) para o par slug do layout. */
-function edgeForDmPair(edges: Edge[], slugA: string, slugB: string, layoutId: string) {
-  const apiId = dmApiChannelId(slugA, slugB)
+type DmDrawable = {
+  kind: 'dm'
+  channelId: string
+  edge: Edge
+  slugA: string
+  slugB: string
+  d: string
+  labelX: number
+  labelY: number
+  label: string
+}
+
+type GroupDrawable = {
+  kind: 'group'
+  channelId: string
+  edge: Edge
+  segs: ReturnType<typeof groupCurveSegs>
+  label: string
+}
+
+type EdgeDrawable = DmDrawable | GroupDrawable
+
+/** participant_ids (UUID ou slug mock) → slugs com posição no canvas. */
+function resolveMemberSlugs(
+  participantIds: string[],
+  positions: Record<string, NodePos>,
+): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const pid of participantIds) {
+    const slug = layoutSlug(pid)
+    if (!slug || seen.has(slug)) continue
+    if (!positions[slug]) continue
+    seen.add(slug)
+    out.push(slug)
+  }
+  return out
+}
+
+function isGroupEdge(edge: Edge): boolean {
   return (
-    edges.find((e) => e.channel_id === layoutId) ||
-    (apiId ? edges.find((e) => e.channel_id === apiId) : undefined)
+    edge.channel_type === 'group' ||
+    isGroupChannelId(edge.channel_id) ||
+    edge.participant_ids.length > 2
   )
 }
 
-function edgeForGroup(edges: Edge[]) {
-  return edges.find((e) => isGroupChannelId(e.channel_id))
+/** Deriva geometria de arestas a partir de GET /v1/graph edges[] (não DM_EDGE_PAIRS). */
+function buildEdgeDrawables(
+  edges: Edge[],
+  positions: Record<string, NodePos>,
+): EdgeDrawable[] {
+  const drawables: EdgeDrawable[] = []
+
+  for (const edge of edges) {
+    if (isGroupEdge(edge)) {
+      const members = resolveMemberSlugs(edge.participant_ids, positions)
+      const segs = groupCurveSegs(positions, members)
+      if (segs.length === 0) continue
+      drawables.push({
+        kind: 'group',
+        channelId: edge.channel_id,
+        edge,
+        segs,
+        label: edge.label?.trim() || 'grupo',
+      })
+      continue
+    }
+
+    // DM: 2 participantes que resolvem a slugs no canvas
+    const members = resolveMemberSlugs(edge.participant_ids, positions)
+    if (members.length < 2) continue
+    const slugA = members[0]!
+    const slugB = members[1]!
+    const posA = positions[slugA]
+    const posB = positions[slugB]
+    if (!posA || !posB) continue
+    const { d, labelX, labelY } = dmCurve(slugA, posA, slugB, posB)
+    drawables.push({
+      kind: 'dm',
+      channelId: edge.channel_id,
+      edge,
+      slugA,
+      slugB,
+      d,
+      labelX,
+      labelY,
+      label: edge.label?.trim() || 'DM',
+    })
+  }
+
+  return drawables
 }
 
 function clientToSvg(
@@ -86,6 +167,11 @@ export function GraphCanvas({
   const sendingEdge = edges.find((e) => e.sending)
   const sendingChannel = sendingEdge?.channel_id ?? null
   const sendingFrom = sendingEdge?.sending_from_agent_id ?? null
+
+  const drawables = useMemo(
+    () => buildEdgeDrawables(edges, positions),
+    [edges, positions],
+  )
 
   const onNodePointerDown = useCallback(
     (slug: string, e: ReactPointerEvent) => {
@@ -147,8 +233,6 @@ export function GraphCanvas({
     [onSelectAgent, edges],
   )
 
-  const groupSegs = groupCurveSegs(positions)
-
   return (
     <div className="canvas-wrap">
       <div className="banner delayed">
@@ -179,58 +263,43 @@ export function GraphCanvas({
         preserveAspectRatio="xMidYMid meet"
       >
         <g id="edges">
-          {DM_EDGE_PAIRS.map((pair) => {
-            const a = positions[pair.a]
-            const b = positions[pair.b]
-            if (!a || !b) return null
-            const { d } = dmCurve(pair.a, a, pair.b, b)
-            const edge = edgeForDmPair(edges, pair.a, pair.b, pair.channel_id)
-            const kind = edge?.channel_type ?? 'dm'
-            const apiId = dmApiChannelId(pair.a, pair.b)
-            const isSending =
-              sendingChannel === pair.channel_id ||
-              (apiId != null && sendingChannel === apiId)
-            const isSelected =
-              selectedChannelId === pair.channel_id ||
-              (apiId != null && selectedChannelId === apiId)
-            const cls = [
-              'edge',
-              kind,
-              isSelected ? 'selected' : '',
-              isSending ? 'sending' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')
-            return (
-              <g key={pair.channel_id}>
-                <path
-                  className="edge-hit"
-                  d={d}
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    onSelectChannel(edge?.channel_id ?? apiId ?? pair.channel_id)
-                  }}
-                />
-                <path
-                  className={cls}
-                  d={d}
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    onSelectChannel(edge?.channel_id ?? apiId ?? pair.channel_id)
-                  }}
-                />
-              </g>
-            )
-          })}
-          {groupSegs.map((seg) => {
-            const groupEdge = edgeForGroup(edges)
-            const isSending =
-              sendingChannel === 'group-l2s' ||
-              (sendingChannel != null && isGroupChannelId(sendingChannel))
-            const isSelected =
-              selectedChannelId === 'group-l2s' ||
-              (selectedChannelId != null && isGroupChannelId(selectedChannelId))
-            void groupEdge
+          {drawables.map((item) => {
+            if (item.kind === 'dm') {
+              const isSending = sendingChannel === item.channelId
+              const isSelected = selectedChannelId === item.channelId
+              const cls = [
+                'edge',
+                item.edge.channel_type || 'dm',
+                isSelected ? 'selected' : '',
+                isSending ? 'sending' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+              return (
+                <g key={item.channelId}>
+                  <path
+                    className="edge-hit"
+                    d={item.d}
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      onSelectChannel(item.channelId)
+                    }}
+                  />
+                  <path
+                    className={cls}
+                    d={item.d}
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      onSelectChannel(item.channelId)
+                    }}
+                  />
+                </g>
+              )
+            }
+
+            // group — um path por segmento; select/sending usam channel_id da API
+            const isSending = sendingChannel === item.channelId
+            const isSelected = selectedChannelId === item.channelId
             const cls = [
               'edge',
               'group',
@@ -240,64 +309,63 @@ export function GraphCanvas({
               .filter(Boolean)
               .join(' ')
             return (
-              <g key={seg.key}>
-                <path
-                  className="edge-hit"
-                  d={seg.d}
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    onSelectChannel(resolveApiChannelId('group-l2s', edges))
-                  }}
-                />
-                <path
-                  className={cls}
-                  d={seg.d}
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    onSelectChannel(resolveApiChannelId('group-l2s', edges))
-                  }}
-                />
+              <g key={item.channelId}>
+                {item.segs.map((seg) => (
+                  <g key={seg.key}>
+                    <path
+                      className="edge-hit"
+                      d={seg.d}
+                      onClick={(ev) => {
+                        ev.stopPropagation()
+                        onSelectChannel(item.channelId)
+                      }}
+                    />
+                    <path
+                      className={cls}
+                      d={seg.d}
+                      onClick={(ev) => {
+                        ev.stopPropagation()
+                        onSelectChannel(item.channelId)
+                      }}
+                    />
+                  </g>
+                ))}
               </g>
             )
           })}
         </g>
 
         <g pointerEvents="none">
-          {DM_EDGE_PAIRS.map((pair) => {
-            const a = positions[pair.a]
-            const b = positions[pair.b]
-            if (!a || !b) return null
-            const { labelX, labelY } = dmCurve(pair.a, a, pair.b, b)
-            const apiId = dmApiChannelId(pair.a, pair.b)
-            const isSending =
-              sendingChannel === pair.channel_id ||
-              (apiId != null && sendingChannel === apiId)
-            const text = isSending ? 'DM · enviando…' : pair.label
-            return (
-              <text
-                key={`lbl-${pair.channel_id}`}
-                className={['edge-label', isSending ? 'sending' : '']
-                  .filter(Boolean)
-                  .join(' ')}
-                x={labelX}
-                y={labelY}
-              >
-                {text}
-              </text>
-            )
+          {drawables.map((item) => {
+            if (item.kind === 'dm') {
+              const isSending = sendingChannel === item.channelId
+              const text = isSending ? 'DM · enviando…' : item.label
+              return (
+                <text
+                  key={`lbl-${item.channelId}`}
+                  className={['edge-label', isSending ? 'sending' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  x={item.labelX}
+                  y={item.labelY}
+                >
+                  {text}
+                </text>
+              )
+            }
+            return item.segs
+              .filter((s) => s.showLabel)
+              .map((seg) => (
+                <text
+                  key={`lbl-${item.channelId}:${seg.key}`}
+                  className="edge-label group"
+                  x={seg.labelX}
+                  y={seg.labelY}
+                >
+                  {item.label}
+                </text>
+              ))
           })}
-          {groupSegs
-            .filter((s) => s.showLabel)
-            .map((seg) => (
-              <text
-                key={`lbl-${seg.key}`}
-                className="edge-label group"
-                x={seg.labelX}
-                y={seg.labelY}
-              >
-                grupo L2S
-              </text>
-            ))}
         </g>
 
         {agents.map((agent) => {

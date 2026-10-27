@@ -3,7 +3,10 @@ import { NODE_H, NODE_W } from './positions'
 export type NodePos = { x: number; y: number }
 export type Pt = { x: number; y: number }
 
-/** Pares DM canônicos do wireframe (channel_id slug:slug). */
+/**
+ * Pares DM canônicos do wireframe v7 — referência histórica / DEV.
+ * NÃO é fonte de verdade do canvas: GraphCanvas desenha a partir de GET /v1/graph.
+ */
 export const DM_EDGE_PAIRS: {
   channel_id: string
   a: string
@@ -16,7 +19,10 @@ export const DM_EDGE_PAIRS: {
   { channel_id: 'nuvi:po', a: 'nuvi', b: 'po', label: 'DM' },
 ]
 
-/** Membros do grupo L2S no canvas (arestas de grupo ligam estes nós). */
+/**
+ * Membros default do grupo L2S no wireframe v7 — fallback DEV only.
+ * Produção: GraphCanvas passa participant_ids resolvidos do edge da API.
+ */
 export const GROUP_L2S_MEMBERS = [
   'po',
   'designer',
@@ -103,13 +109,26 @@ export function dmCurve(
 /**
  * Cadeia de curvas do grupo: membros presentes ordenados por x,
  * cada um output→input do próximo — sempre ligados ao drag.
+ * `memberSlugs` = allowlist dinâmica (participant_ids → slugs com posição).
+ * Se omitido e DEV, cai no wireframe GROUP_L2S_MEMBERS.
  */
 export function groupCurveSegs(
   positions: Record<string, NodePos>,
+  memberSlugs?: readonly string[],
 ): { key: string; d: string; labelX: number; labelY: number; showLabel: boolean }[] {
+  const slugs =
+    memberSlugs && memberSlugs.length > 0
+      ? memberSlugs
+      : import.meta.env.DEV
+        ? GROUP_L2S_MEMBERS
+        : []
+
   type Member = { slug: string; pos: NodePos }
   const present: Member[] = []
-  for (const slug of GROUP_L2S_MEMBERS) {
+  const seen = new Set<string>()
+  for (const slug of slugs) {
+    if (seen.has(slug)) continue
+    seen.add(slug)
     const pos = positions[slug]
     if (pos) present.push({ slug, pos })
   }
@@ -133,7 +152,7 @@ export function groupCurveSegs(
     const b = present[i + 1]!
     const { d, labelX, labelY } = curvePath(a.pos, b.pos)
     segs.push({
-      key: `group-l2s:${a.slug}:${b.slug}`,
+      key: `group:${a.slug}:${b.slug}`,
       d,
       labelX,
       labelY,
