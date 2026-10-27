@@ -37,10 +37,6 @@ type Props = {
   onSelectAgent: (agentId: string, channelId: string) => void
 }
 
-function edgeById(edges: Edge[], id: string) {
-  return edges.find((e) => e.channel_id === id)
-}
-
 /** Resolve aresta da API (channel_id UUID:UUID ou group uuid) para o par slug do layout. */
 function edgeForDmPair(edges: Edge[], slugA: string, slugB: string, layoutId: string) {
   const apiId = dmApiChannelId(slugA, slugB)
