@@ -107,10 +107,12 @@ export function dmCurve(
 export function groupCurveSegs(
   positions: Record<string, NodePos>,
 ): { key: string; d: string; labelX: number; labelY: number; showLabel: boolean }[] {
-  const present = GROUP_L2S_MEMBERS.map((slug) => {
+  type Member = { slug: string; pos: NodePos }
+  const present: Member[] = []
+  for (const slug of GROUP_L2S_MEMBERS) {
     const pos = positions[slug]
-    return pos ? { slug, pos } : null
-  }).filter((x): x is { slug: string; pos: NodePos } => !!x)
+    if (pos) present.push({ slug, pos })
+  }
 
   present.sort((a, b) => {
     const ax = a.pos.x + NODE_W / 2
@@ -127,8 +129,8 @@ export function groupCurveSegs(
     showLabel: boolean
   }[] = []
   for (let i = 0; i < present.length - 1; i++) {
-    const a = present[i]
-    const b = present[i + 1]
+    const a = present[i]!
+    const b = present[i + 1]!
     const { d, labelX, labelY } = curvePath(a.pos, b.pos)
     segs.push({
       key: `group-l2s:${a.slug}:${b.slug}`,
