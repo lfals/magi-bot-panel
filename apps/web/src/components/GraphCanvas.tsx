@@ -1,14 +1,16 @@
+import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Agent, Edge } from '../types'
 import {
   EDGE_SEGS,
   NODE_H,
-  NODE_POS,
   NODE_PRIMARY_CHANNEL,
   NODE_W,
   VIEW_H,
   VIEW_W,
 } from '../layout/positions'
 import { layoutSlug, metaForAgentId } from '../layout/agentMap'
+import { DM_EDGE_PAIRS, dmPath } from '../layout/edgeGeometry'
+import { useNodePositions } from '../hooks/useNodePositions'
 
 type Props = {
   agents: Agent[]
@@ -24,6 +26,20 @@ function edgeById(edges: Edge[], id: string) {
   return edges.find((e) => e.channel_id === id)
 }
 
+function clientToSvg(
+  svg: SVGSVGElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const pt = svg.createSVGPoint()
+  pt.x = clientX
+  pt.y = clientY
+  const ctm = svg.getScreenCTM()
+  if (!ctm) return { x: 0, y: 0 }
+  const p = pt.matrixTransform(ctm.inverse())
+  return { x: p.x, y: p.y }
+}
+
 export function GraphCanvas({
   agents,
   edges,
@@ -33,12 +49,85 @@ export function GraphCanvas({
   onSelectChannel,
   onSelectAgent,
 }: Props) {
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const { positions, setPosition } = useNodePositions()
+  const dragRef = useRef<{
+    slug: string
+    offsetX: number
+    offsetY: number
+    moved: boolean
+  } | null>(null)
+  const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
+
   const sendingChannel =
     edges.find((e) => e.sending)?.channel_id ??
     (forceSending ? 'designer:po' : null)
   const sendingFrom =
     edges.find((e) => e.sending)?.sending_from_agent_id ??
     (forceSending ? 'po' : null)
+
+  const onNodePointerDown = useCallback(
+    (slug: string, e: ReactPointerEvent) => {
+      if (e.button !== 0) return
+      const svg = svgRef.current
+      if (!svg) return
+      e.stopPropagation()
+      e.preventDefault()
+      const pt = clientToSvg(svg, e.clientX, e.clientY)
+      const pos = positions[slug]
+      if (!pos) return
+      dragRef.current = {
+        slug,
+        offsetX: pt.x - pos.x,
+        offsetY: pt.y - pos.y,
+        moved: false,
+      }
+      setDraggingSlug(slug)
+      ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+    },
+    [positions],
+  )
+
+  const onNodePointerMove = useCallback(
+    (e: ReactPointerEvent) => {
+      const drag = dragRef.current
+      const svg = svgRef.current
+      if (!drag || !svg) return
+      const pt = clientToSvg(svg, e.clientX, e.clientY)
+      const x = Math.min(Math.max(0, pt.x - drag.offsetX), VIEW_W - NODE_W)
+      const y = Math.min(Math.max(0, pt.y - drag.offsetY), VIEW_H - NODE_H)
+      const prev = positions[drag.slug]
+      if (
+        prev &&
+        (Math.abs(prev.x - x) > 2 || Math.abs(prev.y - y) > 2)
+      ) {
+        drag.moved = true
+      }
+      setPosition(drag.slug, { x, y })
+    },
+    [positions, setPosition],
+  )
+
+  const onNodePointerUp = useCallback(
+    (agentId: string, slug: string, e: ReactPointerEvent) => {
+      const drag = dragRef.current
+      const moved = drag?.moved ?? false
+      dragRef.current = null
+      setDraggingSlug(null)
+      try {
+        ;(e.currentTarget as Element).releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+      if (!moved) {
+        const primary = NODE_PRIMARY_CHANNEL[slug]
+        if (primary) onSelectAgent(agentId, primary)
+      }
+    },
+    [onSelectAgent],
+  )
+
+  const groupSegs = EDGE_SEGS.filter((s) => s.channel_id === 'group-l2s')
 
   return (
     <div className="canvas-wrap">
@@ -64,14 +153,53 @@ export function GraphCanvas({
       </div>
 
       <svg
+        ref={svgRef}
         className="graph"
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         preserveAspectRatio="xMidYMid meet"
       >
         <g id="edges">
-          {EDGE_SEGS.map((seg, i) => {
-            const edge = edgeById(edges, seg.channel_id)
+          {DM_EDGE_PAIRS.map((pair) => {
+            const a = positions[pair.a]
+            const b = positions[pair.b]
+            if (!a || !b) return null
+            const { d } = dmPath(a, b)
+            const edge = edgeById(edges, pair.channel_id)
             const kind = edge?.channel_type ?? 'dm'
+            const isSending = sendingChannel === pair.channel_id
+            const isSelected = selectedChannelId === pair.channel_id
+            const cls = [
+              'edge',
+              kind,
+              isSelected ? 'selected' : '',
+              isSending ? 'sending' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+            return (
+              <g key={pair.channel_id}>
+                <path
+                  className="edge-hit"
+                  d={d}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelectChannel(pair.channel_id)
+                  }}
+                />
+                <path
+                  className={cls}
+                  d={d}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelectChannel(pair.channel_id)
+                  }}
+                />
+              </g>
+            )
+          })}
+          {groupSegs.map((seg, i) => {
+            const edge = edgeById(edges, seg.channel_id)
+            const kind = edge?.channel_type ?? 'group'
             const isSending = sendingChannel === seg.channel_id
             const isSelected = selectedChannelId === seg.channel_id
             const cls = [
@@ -83,7 +211,7 @@ export function GraphCanvas({
               .filter(Boolean)
               .join(' ')
             return (
-              <g key={`${seg.channel_id}-${i}`}>
+              <g key={`group-${i}`}>
                 <path
                   className="edge-hit"
                   d={seg.d}
@@ -106,38 +234,46 @@ export function GraphCanvas({
         </g>
 
         <g pointerEvents="none">
-          {EDGE_SEGS.filter((s) => s.label).map((seg) => {
-            const isSending = sendingChannel === seg.channel_id
-            const edge = edgeById(edges, seg.channel_id)
-            const isGroup = edge?.channel_type === 'group'
-            let text = seg.label!.text
-            if (isSending && !isGroup) text = 'DM · enviando…'
+          {DM_EDGE_PAIRS.map((pair) => {
+            const a = positions[pair.a]
+            const b = positions[pair.b]
+            if (!a || !b) return null
+            const { labelX, labelY } = dmPath(a, b)
+            const isSending = sendingChannel === pair.channel_id
+            const text = isSending ? 'DM · enviando…' : pair.label
             return (
               <text
-                key={`lbl-${seg.channel_id}-${seg.label!.x}`}
-                className={[
-                  'edge-label',
-                  isGroup ? 'group' : '',
-                  isSending ? 'sending' : '',
-                ]
+                key={`lbl-${pair.channel_id}`}
+                className={['edge-label', isSending ? 'sending' : '']
                   .filter(Boolean)
                   .join(' ')}
-                x={seg.label!.x}
-                y={seg.label!.y}
+                x={labelX}
+                y={labelY}
               >
                 {text}
               </text>
             )
           })}
+          {groupSegs
+            .filter((s) => s.label)
+            .map((seg) => (
+              <text
+                key={`lbl-group-${seg.label!.x}`}
+                className="edge-label group"
+                x={seg.label!.x}
+                y={seg.label!.y}
+              >
+                {seg.label!.text}
+              </text>
+            ))}
         </g>
 
         {agents.map((agent) => {
           const meta = metaForAgentId(agent.agent_id)
           const slug = layoutSlug(agent.agent_id)
           if (!slug) return null
-          const pos = NODE_POS[slug]
+          const pos = positions[slug]
           if (!pos) return null
-          const primary = NODE_PRIMARY_CHANNEL[slug]
           const isSending =
             sendingFrom === agent.agent_id || sendingFrom === slug
           const isSelected = selectedAgentId === agent.agent_id
@@ -145,6 +281,7 @@ export function GraphCanvas({
           const name =
             meta?.name ??
             (agent.name && agent.name !== agent.agent_id ? agent.name : slug)
+          const isDragging = draggingSlug === slug
 
           return (
             <g
@@ -153,13 +290,17 @@ export function GraphCanvas({
                 'node',
                 isSelected ? 'selected' : '',
                 isSending ? 'sending' : '',
+                isDragging ? 'dragging' : '',
               ]
                 .filter(Boolean)
                 .join(' ')}
               transform={`translate(${pos.x},${pos.y})`}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (primary) onSelectAgent(agent.agent_id, primary)
+              onPointerDown={(e) => onNodePointerDown(slug, e)}
+              onPointerMove={onNodePointerMove}
+              onPointerUp={(e) => onNodePointerUp(agent.agent_id, slug, e)}
+              onPointerCancel={() => {
+                dragRef.current = null
+                setDraggingSlug(null)
               }}
             >
               <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
