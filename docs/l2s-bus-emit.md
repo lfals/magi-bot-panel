@@ -46,6 +46,12 @@ Collector/catch-up (`transcript_tail`, `readtranscript_catchup`) só geram `mess
 
 Grupo: use `group_id` + `channel_type: "group"` (ou `channel_id` = group id).
 
+Grupos L2S Labs (Grok Bot):
+- Time Dev — Engenharia → `0c1ce563-03df-40a7-9ad3-0cbf4d3e0732`
+- Time Dev — Produto → `e3433f3d-bfc2-483e-b6ae-450eab3e5405`
+
+`from_agent_id` / allowlist = **UUID** Grok Bot; o SPA mapeia UUID→slug (`po`, `designer`, …).
+
 ### `message`
 
 ```json

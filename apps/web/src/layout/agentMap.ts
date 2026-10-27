@@ -75,3 +75,36 @@ export function metaForAgentId(agentId: string): AgentMeta | undefined {
 export function layoutSlug(agentId: string): string | undefined {
   return AGENT_BY_ID[agentId]?.slug ?? (agentId in AGENT_BY_ID ? undefined : agentId)
 }
+
+/** slug → UUID (Grok Bot / allowlist). */
+export const UUID_BY_SLUG: Record<string, string> = Object.fromEntries(
+  Object.entries(AGENT_BY_ID).map(([id, meta]) => [meta.slug, id]),
+)
+
+export function uuidForSlug(slug: string): string | undefined {
+  return UUID_BY_SLUG[slug]
+}
+
+/** channel_id DM na API = sorted(uuidA:uuidB). */
+export function dmApiChannelId(slugA: string, slugB: string): string | undefined {
+  const a = UUID_BY_SLUG[slugA]
+  const b = UUID_BY_SLUG[slugB]
+  if (!a || !b) return undefined
+  return [a, b].sort().join(':')
+}
+
+/** Grupos Grok Bot do time (Time Dev). */
+export const GROUP_CHANNEL_IDS = {
+  engenharia: '0c1ce563-03df-40a7-9ad3-0cbf4d3e0732',
+  produto: 'e3433f3d-bfc2-483e-b6ae-450eab3e5405',
+  /** id canônico do wireframe / skill emit */
+  l2s: 'group-l2s',
+} as const
+
+export function isGroupChannelId(channelId: string): boolean {
+  return (
+    channelId === GROUP_CHANNEL_IDS.l2s ||
+    channelId === GROUP_CHANNEL_IDS.engenharia ||
+    channelId === GROUP_CHANNEL_IDS.produto
+  )
+}

@@ -12,7 +12,12 @@ import {
   VIEW_H,
   VIEW_W,
 } from '../layout/positions'
-import { layoutSlug, metaForAgentId } from '../layout/agentMap'
+import {
+  dmApiChannelId,
+  isGroupChannelId,
+  layoutSlug,
+  metaForAgentId,
+} from '../layout/agentMap'
 import {
   DM_EDGE_PAIRS,
   dmCurve,
@@ -34,6 +39,19 @@ type Props = {
 
 function edgeById(edges: Edge[], id: string) {
   return edges.find((e) => e.channel_id === id)
+}
+
+/** Resolve aresta da API (channel_id UUID:UUID ou group uuid) para o par slug do layout. */
+function edgeForDmPair(edges: Edge[], slugA: string, slugB: string, layoutId: string) {
+  const apiId = dmApiChannelId(slugA, slugB)
+  return (
+    edges.find((e) => e.channel_id === layoutId) ||
+    (apiId ? edges.find((e) => e.channel_id === apiId) : undefined)
+  )
+}
+
+function edgeForGroup(edges: Edge[]) {
+  return edges.find((e) => isGroupChannelId(e.channel_id))
 }
 
 function clientToSvg(
@@ -69,12 +87,11 @@ export function GraphCanvas({
   } | null>(null)
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
 
+  const sendingEdge = edges.find((e) => e.sending)
   const sendingChannel =
-    edges.find((e) => e.sending)?.channel_id ??
-    (forceSending ? 'designer:po' : null)
+    sendingEdge?.channel_id ?? (forceSending ? 'designer:po' : null)
   const sendingFrom =
-    edges.find((e) => e.sending)?.sending_from_agent_id ??
-    (forceSending ? 'po' : null)
+    sendingEdge?.sending_from_agent_id ?? (forceSending ? 'po' : null)
 
   const onNodePointerDown = useCallback(
     (slug: string, e: ReactPointerEvent) => {
@@ -171,10 +188,15 @@ export function GraphCanvas({
             const b = positions[pair.b]
             if (!a || !b) return null
             const { d } = dmCurve(pair.a, a, pair.b, b)
-            const edge = edgeById(edges, pair.channel_id)
+            const edge = edgeForDmPair(edges, pair.a, pair.b, pair.channel_id)
             const kind = edge?.channel_type ?? 'dm'
-            const isSending = sendingChannel === pair.channel_id
-            const isSelected = selectedChannelId === pair.channel_id
+            const apiId = dmApiChannelId(pair.a, pair.b)
+            const isSending =
+              sendingChannel === pair.channel_id ||
+              (apiId != null && sendingChannel === apiId)
+            const isSelected =
+              selectedChannelId === pair.channel_id ||
+              (apiId != null && selectedChannelId === apiId)
             const cls = [
               'edge',
               kind,
@@ -205,8 +227,14 @@ export function GraphCanvas({
             )
           })}
           {groupSegs.map((seg) => {
-            const isSending = sendingChannel === 'group-l2s'
-            const isSelected = selectedChannelId === 'group-l2s'
+            const groupEdge = edgeForGroup(edges)
+            const isSending =
+              sendingChannel === 'group-l2s' ||
+              (sendingChannel != null && isGroupChannelId(sendingChannel))
+            const isSelected =
+              selectedChannelId === 'group-l2s' ||
+              (selectedChannelId != null && isGroupChannelId(selectedChannelId))
+            void groupEdge
             const cls = [
               'edge',
               'group',
@@ -244,7 +272,10 @@ export function GraphCanvas({
             const b = positions[pair.b]
             if (!a || !b) return null
             const { labelX, labelY } = dmCurve(pair.a, a, pair.b, b)
-            const isSending = sendingChannel === pair.channel_id
+            const apiId = dmApiChannelId(pair.a, pair.b)
+            const isSending =
+              sendingChannel === pair.channel_id ||
+              (apiId != null && sendingChannel === apiId)
             const text = isSending ? 'DM · enviando…' : pair.label
             return (
               <text
