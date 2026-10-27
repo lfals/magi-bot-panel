@@ -108,3 +108,22 @@ export function isGroupChannelId(channelId: string): boolean {
     channelId === GROUP_CHANNEL_IDS.produto
   )
 }
+
+/** Layout channel_id (slug:slug / group-l2s) → id da API (UUID:UUID / group UUID). */
+export function apiChannelIdFromLayout(layoutOrApiId: string): string {
+  if (!layoutOrApiId) return layoutOrApiId
+  if (layoutOrApiId === GROUP_CHANNEL_IDS.l2s || layoutOrApiId === 'group-l2s') {
+    // wireframe "grupo L2S" → canal Produto (há aresta/mensagens reais)
+    return GROUP_CHANNEL_IDS.produto
+  }
+  if (isGroupChannelId(layoutOrApiId)) return layoutOrApiId
+  // already UUID DM (contains uuid:uuid) or unknown — pass through if no slug map
+  const parts = layoutOrApiId.split(':')
+  if (parts.length === 2) {
+    const api = dmApiChannelId(parts[0], parts[1])
+    if (api) return api
+  }
+  return layoutOrApiId
+}
+
+

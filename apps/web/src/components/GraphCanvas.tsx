@@ -13,6 +13,7 @@ import {
   VIEW_W,
 } from '../layout/positions'
 import {
+  apiChannelIdFromLayout,
   dmApiChannelId,
   isGroupChannelId,
   layoutSlug,
@@ -141,7 +142,7 @@ export function GraphCanvas({
       }
       if (!moved) {
         const primary = NODE_PRIMARY_CHANNEL[slug]
-        if (primary) onSelectAgent(agentId, primary)
+        if (primary) onSelectAgent(agentId, apiChannelIdFromLayout(primary))
       }
     },
     [onSelectAgent],
@@ -208,7 +209,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(pair.channel_id)
+                    onSelectChannel(apiChannelIdFromLayout(pair.channel_id))
                   }}
                 />
                 <path
@@ -216,7 +217,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(pair.channel_id)
+                    onSelectChannel(apiChannelIdFromLayout(pair.channel_id))
                   }}
                 />
               </g>
@@ -246,7 +247,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel('group-l2s')
+                    onSelectChannel(apiChannelIdFromLayout('group-l2s'))
                   }}
                 />
                 <path
@@ -254,7 +255,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel('group-l2s')
+                    onSelectChannel(apiChannelIdFromLayout('group-l2s'))
                   }}
                 />
               </g>
