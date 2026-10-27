@@ -1,13 +1,16 @@
 /**
  * UUID (Grok Bot / L2S_BUS_ALLOWLIST) → slug do wireframe v7 + rótulos.
  * agent_id na API permanece UUID; o SPA só usa o slug para NODE_POS / canais canônicos.
+ * Display name: sempre preferir este mapa (API name vazio/UUID não vaza no card).
  */
+
 export type AgentMeta = {
   slug: string
   name: string
   role: string
 }
 
+/** 11 agentes L2S Labs + Nuvi (allowlist). Keys em lowercase. */
 export const AGENT_BY_ID: Record<string, AgentMeta> = {
   '98bc92e8-95ca-4940-bb65-1abe3a7f606c': {
     slug: 'po',
@@ -67,13 +70,51 @@ export const AGENT_BY_ID: Record<string, AgentMeta> = {
   },
 }
 
-export function metaForAgentId(agentId: string): AgentMeta | undefined {
-  return AGENT_BY_ID[agentId]
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function normId(agentId: string): string {
+  return agentId.trim().toLowerCase()
 }
 
-/** Resolve slug de layout a partir do agent_id (UUID ou slug mock). */
+export function looksLikeUuid(value: string): boolean {
+  return UUID_RE.test(value.trim())
+}
+
+export function metaForAgentId(agentId: string): AgentMeta | undefined {
+  return AGENT_BY_ID[normId(agentId)] ?? AGENT_BY_ID[agentId]
+}
+
+/** Resolve slug de layout a partir do agent_id (UUID ou slug mock). Nunca devolve UUID cru. */
 export function layoutSlug(agentId: string): string | undefined {
-  return AGENT_BY_ID[agentId]?.slug ?? (agentId in AGENT_BY_ID ? undefined : agentId)
+  const meta = metaForAgentId(agentId)
+  if (meta) return meta.slug
+  // mocks DEV: agent_id já é slug conhecido
+  if (agentId in UUID_BY_SLUG) return agentId
+  return undefined
+}
+
+/** Label do card: agentMap.name > API name (se não for UUID) > slug. */
+export function displayNameForAgent(
+  agentId: string,
+  apiName?: string | null,
+): string {
+  const meta = metaForAgentId(agentId)
+  if (meta?.name) return meta.name
+  const api = apiName?.trim()
+  if (api && api !== agentId && !looksLikeUuid(api)) return api
+  return layoutSlug(agentId) ?? 'bot'
+}
+
+export function displayRoleForAgent(
+  agentId: string,
+  apiRole?: string | null,
+): string {
+  const meta = metaForAgentId(agentId)
+  if (meta?.role) return meta.role
+  const role = apiRole?.trim()
+  if (role && !looksLikeUuid(role)) return role
+  return 'bot'
 }
 
 /** slug → UUID (Grok Bot / allowlist). */
@@ -108,22 +149,3 @@ export function isGroupChannelId(channelId: string): boolean {
     channelId === GROUP_CHANNEL_IDS.produto
   )
 }
-
-/** Layout channel_id (slug:slug / group-l2s) → id da API (UUID:UUID / group UUID). */
-export function apiChannelIdFromLayout(layoutOrApiId: string): string {
-  if (!layoutOrApiId) return layoutOrApiId
-  if (layoutOrApiId === GROUP_CHANNEL_IDS.l2s || layoutOrApiId === 'group-l2s') {
-    // wireframe "grupo L2S" → canal Produto (há aresta/mensagens reais)
-    return GROUP_CHANNEL_IDS.produto
-  }
-  if (isGroupChannelId(layoutOrApiId)) return layoutOrApiId
-  // already UUID DM (contains uuid:uuid) or unknown — pass through if no slug map
-  const parts = layoutOrApiId.split(':')
-  if (parts.length === 2) {
-    const api = dmApiChannelId(parts[0], parts[1])
-    if (api) return api
-  }
-  return layoutOrApiId
-}
-
-

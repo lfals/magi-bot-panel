@@ -1,5 +1,6 @@
 import type { Edge, Message } from '../types'
 import { CHANNEL_TITLES } from '../api/mockData'
+import { displayNameForAgent } from '../layout/agentMap'
 
 type Props = {
   channelId: string | null
@@ -66,7 +67,7 @@ export function DetailDrawer({ channelId, edge, messages, loading, onClose }: Pr
           messages.map((m) => (
             <article key={m.event_id} className="msg">
               <div className="msg-head">
-                <span className="msg-from">{m.from_name ?? m.from_agent_id}</span>
+                <span className="msg-from">{displayNameForAgent(m.from_agent_id, m.from_name)}</span>
                 {m.priority ? <span className="prio">priority</span> : null}
                 <span className="msg-time">{formatTime(m.ts)}</span>
               </div>

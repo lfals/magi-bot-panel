@@ -13,11 +13,11 @@ import {
   VIEW_W,
 } from '../layout/positions'
 import {
-  apiChannelIdFromLayout,
+  displayNameForAgent,
+  displayRoleForAgent,
   dmApiChannelId,
   isGroupChannelId,
   layoutSlug,
-  metaForAgentId,
 } from '../layout/agentMap'
 import {
   DM_EDGE_PAIRS,
@@ -142,7 +142,7 @@ export function GraphCanvas({
       }
       if (!moved) {
         const primary = NODE_PRIMARY_CHANNEL[slug]
-        if (primary) onSelectAgent(agentId, apiChannelIdFromLayout(primary))
+        if (primary) onSelectAgent(agentId, primary)
       }
     },
     [onSelectAgent],
@@ -209,7 +209,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(apiChannelIdFromLayout(pair.channel_id))
+                    onSelectChannel(pair.channel_id)
                   }}
                 />
                 <path
@@ -217,7 +217,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(apiChannelIdFromLayout(pair.channel_id))
+                    onSelectChannel(pair.channel_id)
                   }}
                 />
               </g>
@@ -247,7 +247,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(apiChannelIdFromLayout('group-l2s'))
+                    onSelectChannel('group-l2s')
                   }}
                 />
                 <path
@@ -255,7 +255,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(apiChannelIdFromLayout('group-l2s'))
+                    onSelectChannel('group-l2s')
                   }}
                 />
               </g>
@@ -302,7 +302,6 @@ export function GraphCanvas({
         </g>
 
         {agents.map((agent) => {
-          const meta = metaForAgentId(agent.agent_id)
           const slug = layoutSlug(agent.agent_id)
           if (!slug) return null
           const pos = positions[slug]
@@ -310,10 +309,8 @@ export function GraphCanvas({
           const isSending =
             sendingFrom === agent.agent_id || sendingFrom === slug
           const isSelected = selectedAgentId === agent.agent_id
-          const role = meta?.role ?? agent.role ?? 'bot'
-          const name =
-            meta?.name ??
-            (agent.name && agent.name !== agent.agent_id ? agent.name : slug)
+          const role = displayRoleForAgent(agent.agent_id, agent.role)
+          const name = displayNameForAgent(agent.agent_id, agent.name)
           const isDragging = draggingSlug === slug
           const inn = inputPort({ x: 0, y: 0 })
           const out = outputPort({ x: 0, y: 0 })
