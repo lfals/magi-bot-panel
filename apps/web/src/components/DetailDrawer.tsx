@@ -1,5 +1,21 @@
 import type { Edge, Message } from '../types'
 import { CHANNEL_TITLES } from '../api/mockData'
+import { AGENT_BY_ID, GROUP_CHANNEL_IDS, isGroupChannelId } from '../layout/agentMap'
+
+function titleForChannel(channelId: string, edge: Edge | null): string {
+  if (CHANNEL_TITLES[channelId]) return CHANNEL_TITLES[channelId]
+  if (edge?.label) return edge.label
+  if (channelId === GROUP_CHANNEL_IDS.produto) return 'Time Dev — Produto'
+  if (channelId === GROUP_CHANNEL_IDS.engenharia) return 'Time Dev — Engenharia'
+  if (isGroupChannelId(channelId)) return 'Grupo L2S'
+  const parts = channelId.split(':')
+  if (parts.length === 2) {
+    const a = AGENT_BY_ID[parts[0]]?.name ?? parts[0].slice(0, 8)
+    const b = AGENT_BY_ID[parts[1]]?.name ?? parts[1].slice(0, 8)
+    return `${a} ↔ ${b}`
+  }
+  return channelId
+}
 import { displayNameForAgent } from '../layout/agentMap'
 
 type Props = {
@@ -24,9 +40,7 @@ function formatTime(iso: string) {
 }
 
 export function DetailDrawer({ channelId, edge, messages, loading, onClose }: Props) {
-  const title = channelId
-    ? (CHANNEL_TITLES[channelId] ?? edge?.label ?? channelId)
-    : '—'
+  const title = channelId ? titleForChannel(channelId, edge) : '—'
   const tag = edge?.channel_type ?? null
   const sub = !channelId
     ? 'Selecione uma linha (conversa)'
