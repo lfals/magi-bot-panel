@@ -24,7 +24,7 @@ export const MOCK_AGENTS: Agent[] = [
     name: 'Frontend',
     role: 'ui',
     status: 'idle',
-    status_text: 'idle · pause design',
+    status_text: 'livre',
     last_seen_at: '2026-10-27T10:09:00-03:00',
   },
   {
@@ -32,7 +32,7 @@ export const MOCK_AGENTS: Agent[] = [
     name: 'Nuvi',
     role: 'helper',
     status: 'idle',
-    status_text: 'idle',
+    status_text: 'livre',
     last_seen_at: '2026-10-27T10:08:00-03:00',
   },
   {
@@ -48,7 +48,7 @@ export const MOCK_AGENTS: Agent[] = [
     name: 'Arquiteto',
     role: 'adr',
     status: 'idle',
-    status_text: 'idle',
+    status_text: 'livre',
     last_seen_at: '2026-10-27T09:55:00-03:00',
   },
   {

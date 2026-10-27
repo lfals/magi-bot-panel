@@ -99,7 +99,7 @@ export function FeedPanel({
         <h1>
           Feed global <span className="live-badge">{liveBadge(uiState)}</span>
         </h1>
-        <div className="sub">Msgs + estados de handoff · sem composer</div>
+        <div className="sub">Msgs + estados · card = status_text · sem composer</div>
         <div className="order-note">
           Ordem: <strong>mais recente em cima</strong> (stream de monitoramento).
         </div>
@@ -111,7 +111,7 @@ export function FeedPanel({
             <i className="swatch wait" /> aguardando X
           </span>
           <span>
-            <i className="swatch idle" /> idle
+            <i className="swatch idle" /> livre
           </span>
         </div>
       </div>

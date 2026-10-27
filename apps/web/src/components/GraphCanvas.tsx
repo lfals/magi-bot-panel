@@ -158,6 +158,20 @@ function edgeClassName(
     .join(' ')
 }
 
+/** v9: idle → «livre»; busy/waiting → status_text real (nunca rótulo busy/idle). */
+function cardStatusLabel(agent: { status: string; status_text: string }): string {
+  if (agent.status === 'idle') return 'livre'
+  if (agent.status === 'offline') {
+    const t = agent.status_text?.trim()
+    return t && !/^idle$/i.test(t) ? t : 'offline'
+  }
+  const t = agent.status_text?.trim()
+  if (!t || /^idle$/i.test(t) || /^busy$/i.test(t)) {
+    return agent.status === 'waiting' ? 'aguardando…' : 'trabalhando…'
+  }
+  return t
+}
+
 export function GraphCanvas({
   agents,
   edges,
@@ -428,7 +442,7 @@ export function GraphCanvas({
                 {name}
               </text>
               <text className="status" x={12} y={52}>
-                {agent.status_text}
+                {cardStatusLabel(agent)}
               </text>
             </g>
           )

@@ -309,8 +309,9 @@ export function usePanel() {
   )
 
   const feedRows: FeedRow[] = useMemo(() => {
+    // Polish v9: msgs (newest-first) acima das state-rows
     const msgs: FeedRow[] = messages.map((m) => ({ kind: 'msg' as const, message: m }))
-    return [...stateRows, ...msgs]
+    return [...msgs, ...stateRows]
   }, [stateRows, messages])
 
   const uiState = deriveUiState(
