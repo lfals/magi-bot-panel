@@ -1,0 +1,57 @@
+# Magi — painel de bots L2S-43
+# Bind APENAS Tailscale (100.x) e/ou loopback no HOST. NUNCA publicar em 0.0.0.0 público.
+#
+#   export MAGI_BIND_IP=$(tailscale ip -4)
+#   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+
+services:
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    container_name: magi-bot-panel-api
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      BIND_ADDR: ${BIND_ADDR:-0.0.0.0:8787}
+      DATABASE_PATH: ${DATABASE_PATH:-/data/events.sqlite}
+      L2S_BUS_HMAC_SECRET: ${L2S_BUS_HMAC_SECRET}
+      L2S_BUS_ALLOWLIST: ${L2S_BUS_ALLOWLIST}
+      MAGI_PANEL_TOKEN: ${MAGI_PANEL_TOKEN:-}
+    volumes:
+      - panel-data:/data
+    ports:
+      - "${MAGI_BIND_IP:127.0.0.1}:${API_PORT:-8787}:8787"
+    networks:
+      - panel
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+    container_name: magi-bot-panel-web
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://magi:8787}
+      VITE_WS_URL: ${PUBLIC_WS_URL:-ws://magi:8787/v1/stream}
+    ports:
+      - "${MAGI_BIND_IP:127.0.0.1}:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - panel
+
+volumes:
+  panel-data:
+
+networks:
+  panel:
+    driver: bridge
