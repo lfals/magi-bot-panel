@@ -9,7 +9,11 @@ import type {
   PanelUiState,
   WsEvent,
 } from '../types'
-import { dmApiChannelId, layoutSlug } from '../layout/agentMap'
+import {
+  apiChannelIdFromLayout,
+  dmApiChannelId,
+  layoutSlug,
+} from '../layout/agentMap'
 
 function reduceAgents(agents: Agent[], event: WsEvent): Agent[] {
   if (event.type !== 'agent.status') return agents
@@ -115,7 +119,8 @@ export function usePanel() {
   const loadMessages = useCallback(async (channelId: string) => {
     setMsgsLoading(true)
     try {
-      const list = await channelsApi.listMessages(channelId)
+      const apiId = apiChannelIdFromLayout(channelId)
+      const list = await channelsApi.listMessages(apiId)
       setMessages(list.items)
     } catch (err) {
       console.error(err)
@@ -127,20 +132,22 @@ export function usePanel() {
 
   const selectChannel = useCallback(
     (channelId: string) => {
-      setSelectedChannelId(channelId)
+      const apiId = apiChannelIdFromLayout(channelId)
+      setSelectedChannelId(apiId)
       setSelectedAgentId(null)
       setPanelOpen(true)
-      void loadMessages(channelId)
+      void loadMessages(apiId)
     },
     [loadMessages],
   )
 
   const selectAgent = useCallback(
     (agentId: string, channelId: string) => {
+      const apiId = apiChannelIdFromLayout(channelId)
       setSelectedAgentId(agentId)
-      setSelectedChannelId(channelId)
+      setSelectedChannelId(apiId)
       setPanelOpen(true)
-      void loadMessages(channelId)
+      void loadMessages(apiId)
     },
     [loadMessages],
   )

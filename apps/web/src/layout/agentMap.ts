@@ -151,7 +151,23 @@ export function isGroupChannelId(channelId: string): boolean {
 }
 
 
-/** Converte channel_id de layout (slug:slug / group-l2s) → id da API (UUID:UUID / group UUID). */
+
+/** Layout channel_id (slug:slug / group-l2s) → id da API (UUID:UUID / group UUID). */
+export function apiChannelIdFromLayout(layoutOrApiId: string): string {
+  if (!layoutOrApiId) return layoutOrApiId
+  if (layoutOrApiId === GROUP_CHANNEL_IDS.l2s || layoutOrApiId === 'group-l2s') {
+    return GROUP_CHANNEL_IDS.produto
+  }
+  if (isGroupChannelId(layoutOrApiId)) return layoutOrApiId
+  const parts = layoutOrApiId.split(':')
+  if (parts.length === 2) {
+    const api = dmApiChannelId(parts[0], parts[1])
+    if (api) return api
+  }
+  return layoutOrApiId
+}
+
+/** Prefer edge.channel_id from graph; fallback apiChannelIdFromLayout. */
 export function resolveApiChannelId(
   layoutOrApiId: string,
   edges: ReadonlyArray<{ channel_id: string }>,
@@ -162,20 +178,19 @@ export function resolveApiChannelId(
   if (layoutOrApiId === 'group-l2s' || isGroupChannelId(layoutOrApiId)) {
     const group = edges.find((e) => isGroupChannelId(e.channel_id))
     if (group) return group.channel_id
-    return GROUP_CHANNEL_IDS.produto
   }
 
-  // DM layout "slugA:slugB" (ordem do wireframe, não sorted)
+  // DM layout "slugA:slugB" — prefer the edge id present in the snapshot
   if (layoutOrApiId.includes(':')) {
     const [a, b] = layoutOrApiId.split(':')
     if (a && b && !looksLikeUuid(a) && !looksLikeUuid(b)) {
       const api = dmApiChannelId(a, b)
       if (api) {
         const hit = edges.find((e) => e.channel_id === api)
-        return hit?.channel_id ?? api
+        if (hit) return hit.channel_id
       }
     }
   }
 
-  return layoutOrApiId
+  return apiChannelIdFromLayout(layoutOrApiId)
 }
