@@ -1,33 +1,22 @@
-# HANDOFF — apps/api (L2S-43 · ADR-002 rev.4)
+# HANDOFF — apps/api (L2S-43 · ADR-002 rev.5 / L2S-54)
 
 Draft local em `/workspace/magi-bot-panel/apps/api`. **Não** há push/PR de bot. Commit como humano **`lfals`**.
 
-## O que mudou (vs scaffold)
+## O que mudou (rev.5 / L2S-54)
 
-- Ingest tipado em `POST /v1/events`: `message` | `edge.sending` | `agent.status` | `agent.heartbeat`
-  - **Sem** `POST /v1/presence`
-- `GET /v1/graph` → `{ agents[], edges[] }` (não `nodes`)
-- `GET /v1/agents`, `GET /v1/channels/:id`
-- WS: `message` (não `message.created`), `edge.sending`, `edge.idle`, `agent.status`, `hello`/`ping`
-- Presença/`sending` em memória (`internal/presence`) com TTL ~12s; offline por `last_seen_at` stale (~5 min)
-- **`go.mod` + `go.sum`** via `go mod tidy` (Dockerfile `COPY go.mod go.sum` ok)
-- Dockerfile: multi-stage, `EXPOSE 8787`, `USER app` (uid 10001), `HEALTHCHECK /healthz`, `DATABASE_PATH=/data/events.sqlite`, base `golang:1.27-alpine` (go.mod `go 1.26.0`)
-- Docs espelhados: `docs/openapi.yaml`, `docs/l2s-bus-emit.md`, `docs/IMPLEMENTATION.md` ↔ `/workspace/l2s-43-contracts/`
+- `GET /v1/messages?limit=&before=&since=&channel_id=` — feed global **newest-first** (`{items, next_before}`)
+- Ingest tipado: `message` | `edge.sending` | **`edge.pending`** | `agent.status` | `agent.heartbeat`
+- `agent.status`: `idle|busy|waiting|offline` + `waiting_for_agent_id` / `waiting_for_name` / `status_text`
+- Graph edges: `sending` (TTL ~12s) **e** `pending` (TTL ~30 min); message limpa ambos → `edge.idle`
+- WS global já fan-out `message` com `channel_id` (FE prepend); sem tipo `feed.row`
+- Painel Tailscale-only — **sem** `MAGI_PANEL_TOKEN`
+- Docs: `docs/openapi.yaml` 0.3.0, `docs/IMPLEMENTATION.md`, este HANDOFF
 
 ## Testes (PASS)
 
 ```bash
 cd /workspace/magi-bot-panel/apps/api
-go mod tidy
 go test ./...
-```
-
-## Docker build (contexto = `apps/api`)
-
-```bash
-cd /workspace/magi-bot-panel/apps/api
-docker build -t magi-api:local .
-# Nota: docker CLI não estava disponível no box de draft; validar na Magi/DevOps.
 ```
 
 ## Env (Magi / Compose)
@@ -37,7 +26,7 @@ L2S_BUS_HMAC_SECRET=...
 L2S_BUS_ALLOWLIST=<uuid>,<uuid>
 BIND_ADDR=0.0.0.0:8787
 DATABASE_PATH=/data/events.sqlite
-# opcional: MAGI_PANEL_TOKEN, RATE_LIMIT_PER_MIN
+# MAGI_PANEL_TOKEN: REMOVIDO — Tailscale-only
 ```
 
 ## Commit (Luis / humano `lfals`)
@@ -45,21 +34,10 @@ DATABASE_PATH=/data/events.sqlite
 ```bash
 cd /workspace/magi-bot-panel   # após sync pro clone git
 git add apps/api docs
-git commit -m "feat(api): ADR-002 rev.4 graph + typed ingest + go.sum"
+git commit -m "feat(api): ADR-002 rev.5 feed global + waiting/pending (L2S-54)"
 # push só com identidade humana lfals — sem bot
 ```
 
 ## Fora deste draft
 
-- Sem push/PR bot · Sem Cloudflare Tunnel · Frontend React intocado
-
-## L2S-43 — volume `/data` ownership
-
-- `docker-entrypoint.sh`: se root, `chown -R app:app $(dirname $DATABASE_PATH)` e `su-exec app:app` no server; se não-root, só `exec`.
-- Dockerfile: `su-exec` instalado, `USER app` removido (drop feito no entrypoint), `ENTRYPOINT` + `CMD` mantidos; EXPOSE/HEALTHCHECK iguais.
-- `chown 10001` manual na Magi vira desnecessário após rebuild.
-
-
-## Panel token removido (2026-10-27)
-
-Rotas de leitura do painel **não** exigem `MAGI_PANEL_TOKEN` — confiança no Tailscale. Ingest `/v1/events` continua com HMAC + ALLOWLIST.
+- Sem push/PR bot · Sem Cloudflare Tunnel · Frontend React intocado · Sem feed.row

@@ -1,4 +1,4 @@
-# Contrato skill `l2s-bus-emit` (L2S-43 · ADR-002 rev.4)
+# Contrato skill `l2s-bus-emit` (L2S-43 · ADR-002 rev.5)
 
 Skill compartilhada do time L2S Labs (+ Nuvi): emitir eventos tipados para o painel Magi.
 
@@ -21,11 +21,12 @@ Env: `L2S_BUS_HMAC_SECRET` (mesmo segredo na Magi).
 
 Rejeição se skew > 300s ou assinatura inválida.
 
-## Sequência UX v7 (blink da aresta)
+## Sequência UX v8 (blink + handoff pending)
 
 1. **Antes/ao** `SendToAgent`: emitir `edge.sending`
-2. **Ao concluir** o texto: emitir `message` (limpa blink no server + WS)
-3. Opcional: `agent.status` / `agent.heartbeat` para texto no nó
+2. **Ao concluir** o texto: emitir `message` (limpa sending + pending no server + WS)
+3. Pós-handoff aberto: `edge.pending` + `agent.status` waiting (requester) / busy (executor)
+4. Opcional: `agent.heartbeat` para keep-alive do nó
 
 Collector/catch-up (`transcript_tail`, `readtranscript_catchup`) só geram `message`.
 
@@ -45,12 +46,6 @@ Collector/catch-up (`transcript_tail`, `readtranscript_catchup`) só geram `mess
 ```
 
 Grupo: use `group_id` + `channel_type: "group"` (ou `channel_id` = group id).
-
-Grupos L2S Labs (Grok Bot):
-- Time Dev — Engenharia → `0c1ce563-03df-40a7-9ad3-0cbf4d3e0732`
-- Time Dev — Produto → `e3433f3d-bfc2-483e-b6ae-450eab3e5405`
-
-`from_agent_id` / allowlist = **UUID** Grok Bot; o SPA mapeia UUID→slug (`po`, `designer`, …).
 
 ### `message`
 
@@ -80,7 +75,22 @@ Grupos L2S Labs (Grok Bot):
 }
 ```
 
-`status`: `idle` | `busy` | `offline`. `status_text` é o que o nó mostra.
+`status`: `idle` | `busy` | `waiting` | `offline`. `status_text` é o que o nó mostra.
+Campos opcionais quando `waiting`: `waiting_for_agent_id`, `waiting_for_name`.
+
+### `edge.pending`
+
+```json
+{
+  "type": "edge.pending",
+  "from_agent_id": "<requester>",
+  "to_agent_id": "<executor>",
+  "channel_type": "dm",
+  "dedupe_key": "pending:<channel>:<from>:<to>"
+}
+```
+
+TTL server ~30 min; limpa em `message` naquele canal (ou `edge.idle`).
 
 ### `agent.heartbeat`
 
@@ -114,8 +124,3 @@ Falha de emit **não** deve bloquear o trabalho do bot (best-effort).
 ## Allowlist
 
 Só agents em `L2S_BUS_ALLOWLIST` (CSV de UUIDs) na Magi.
-
-## Helpers
-
-- Magi: `/home/felps/magi-bot-panel/scripts/l2s-bus-emit.sh` (lê `.env` local)
-- Mac: `scripts/emit-via-magi.sh` → SSH no helper Magi (sem HMAC no laptop)

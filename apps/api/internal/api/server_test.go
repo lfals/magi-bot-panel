@@ -391,7 +391,7 @@ func TestStreamHello(t *testing.T) {
 func TestAgentOfflineProjection(t *testing.T) {
 	srv := testServer(t, agentA)
 	srv.presence.SetOfflineAfter(10 * time.Millisecond)
-	srv.presence.TouchAgent(agentA, "Backend", presence.StatusIdle, "idle", time.Now().Add(-time.Second))
+	srv.presence.TouchAgent(agentA, "Backend", presence.StatusIdle, "idle", "", "", time.Now().Add(-time.Second))
 	agents, err := srv.buildAgents(time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -407,5 +407,186 @@ func TestAgentOfflineProjection(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("agent A missing")
+	}
+}
+
+
+func TestGlobalMessagesNewestFirstAndPagination(t *testing.T) {
+	srv := testServer(t, agentA, agentB)
+	agentC := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	srv.cfg.Allowlist[agentC] = struct{}{}
+
+	// three messages across two channels with controlled timestamps via store
+	now := time.Now().UTC()
+	bodies := []struct {
+		from, to, body, dedupe string
+		ts                     time.Time
+	}{
+		{agentA, agentB, "m1-oldest", "global-m1xxxxxx", now.Add(-3 * time.Minute)},
+		{agentA, agentC, "m2-mid", "global-m2xxxxxx", now.Add(-2 * time.Minute)},
+		{agentA, agentB, "m3-newest", "global-m3xxxxxx", now.Add(-1 * time.Minute)},
+	}
+	for _, b := range bodies {
+		in := store.IngestInput{
+			Type:        "message",
+			ChannelType: store.ChannelDM,
+			FromAgentID: b.from,
+			ToAgentID:   &b.to,
+			Body:        b.body,
+			Source:      store.SourceEmit,
+			DedupeKey:   b.dedupe,
+			TS:          b.ts.Format(time.RFC3339Nano),
+		}
+		ev, err := store.NormalizeMessage(in, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := srv.store.Insert(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/messages?limit=2", nil))
+	if rr.Code != 200 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	var page1 map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &page1)
+	items := page1["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("want 2 got %#v", items)
+	}
+	if items[0].(map[string]any)["body"] != "m3-newest" {
+		t.Fatalf("newest first %#v", items[0])
+	}
+	if items[1].(map[string]any)["body"] != "m2-mid" {
+		t.Fatalf("second %#v", items[1])
+	}
+	if _, ok := items[0].(map[string]any)["channel_id"]; !ok {
+		t.Fatal("channel_id required on global feed items")
+	}
+	next := page1["next_before"]
+	if next == nil || next == "" {
+		t.Fatalf("expected next_before %#v", page1)
+	}
+
+	rr2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/v1/messages?limit=2&before="+next.(string), nil))
+	if rr2.Code != 200 {
+		t.Fatalf("page2 %d %s", rr2.Code, rr2.Body.String())
+	}
+	var page2 map[string]any
+	_ = json.Unmarshal(rr2.Body.Bytes(), &page2)
+	items2 := page2["items"].([]any)
+	if len(items2) != 1 || items2[0].(map[string]any)["body"] != "m1-oldest" {
+		t.Fatalf("page2 %#v", items2)
+	}
+
+	chAB := agentA + ":" + agentB
+	rr3 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr3, httptest.NewRequest(http.MethodGet, "/v1/messages?channel_id="+chAB, nil))
+	var filtered map[string]any
+	_ = json.Unmarshal(rr3.Body.Bytes(), &filtered)
+	fitems := filtered["items"].([]any)
+	if len(fitems) != 2 {
+		t.Fatalf("channel filter %#v", fitems)
+	}
+	for _, it := range fitems {
+		if it.(map[string]any)["channel_id"] != chAB {
+			t.Fatalf("wrong channel %#v", it)
+		}
+	}
+}
+
+func TestAgentStatusWaitingOnGraph(t *testing.T) {
+	srv := testServer(t, agentA, agentB)
+	body := []byte(`{"type":"agent.status","agent_id":"` + agentA + `","status":"waiting","status_text":"aguardando Designer","waiting_for_agent_id":"` + agentB + `","waiting_for_name":"Designer","dedupe_key":"wait-1xxxxx"}`)
+	rr := signedPOST(t, srv, body)
+	if rr.Code != 202 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	gr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(gr, httptest.NewRequest(http.MethodGet, "/v1/graph", nil))
+	var graph map[string]any
+	_ = json.Unmarshal(gr.Body.Bytes(), &graph)
+	found := false
+	for _, a := range graph["agents"].([]any) {
+		am := a.(map[string]any)
+		if am["agent_id"] == agentA {
+			found = true
+			if am["status"] != "waiting" {
+				t.Fatalf("status %#v", am)
+			}
+			if am["status_text"] != "aguardando Designer" {
+				t.Fatalf("text %#v", am)
+			}
+			if am["waiting_for_agent_id"] != agentB {
+				t.Fatalf("wait id %#v", am)
+			}
+			if am["waiting_for_name"] != "Designer" {
+				t.Fatalf("wait name %#v", am)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("agent A missing")
+	}
+}
+
+func TestEdgePendingAndMessageClearsBoth(t *testing.T) {
+	srv := testServer(t, agentA, agentB)
+	srv.presence.SetSendingTTL(30 * time.Second)
+	srv.presence.SetPendingTTL(30 * time.Minute)
+
+	sendBody := []byte(`{"type":"edge.sending","from_agent_id":"` + agentA + `","to_agent_id":"` + agentB + `","channel_type":"dm","dedupe_key":"pend-send-1"}`)
+	if rr := signedPOST(t, srv, sendBody); rr.Code != 202 {
+		t.Fatalf("sending %d %s", rr.Code, rr.Body.String())
+	}
+	pendBody := []byte(`{"type":"edge.pending","from_agent_id":"` + agentA + `","to_agent_id":"` + agentB + `","channel_type":"dm","dedupe_key":"pend-1xxxxx"}`)
+	if rr := signedPOST(t, srv, pendBody); rr.Code != 202 {
+		t.Fatalf("pending %d %s", rr.Code, rr.Body.String())
+	}
+
+	chID := agentA + ":" + agentB
+	if _, ok := srv.presence.GetSending(chID, time.Now()); !ok {
+		t.Fatal("expected sending")
+	}
+	if _, ok := srv.presence.GetPending(chID, time.Now()); !ok {
+		t.Fatal("expected pending")
+	}
+
+	gr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(gr, httptest.NewRequest(http.MethodGet, "/v1/graph", nil))
+	var graph map[string]any
+	_ = json.Unmarshal(gr.Body.Bytes(), &graph)
+	edge := graph["edges"].([]any)[0].(map[string]any)
+	if edge["sending"] != true || edge["pending"] != true {
+		t.Fatalf("edge flags %#v", edge)
+	}
+	if edge["pending_from_agent_id"] != agentA {
+		t.Fatalf("pending_from %#v", edge)
+	}
+	if edge["pending_to_agent_id"] != agentB {
+		t.Fatalf("pending_to %#v", edge)
+	}
+
+	msg := msgBody(agentB, agentA, "reply clears", "clear-both-001")
+	if rr := signedPOST(t, srv, msg); rr.Code != 202 {
+		t.Fatalf("msg %d %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := srv.presence.GetSending(chID, time.Now()); ok {
+		t.Fatal("sending should clear")
+	}
+	if _, ok := srv.presence.GetPending(chID, time.Now()); ok {
+		t.Fatal("pending should clear")
+	}
+
+	gr2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(gr2, httptest.NewRequest(http.MethodGet, "/v1/graph", nil))
+	_ = json.Unmarshal(gr2.Body.Bytes(), &graph)
+	edge = graph["edges"].([]any)[0].(map[string]any)
+	if edge["sending"] != false || edge["pending"] != false {
+		t.Fatalf("after clear %#v", edge)
 	}
 }

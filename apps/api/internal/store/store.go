@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS events (
   dedupe_key TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_events_channel_ts ON events(channel_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);
 CREATE TABLE IF NOT EXISTS channels (
   channel_id TEXT PRIMARY KEY,
   channel_type TEXT NOT NULL,
@@ -569,4 +570,52 @@ func (s *Store) KnownAgentIDs() ([]string, map[string]string, error) {
 	}
 	sort.Strings(out)
 	return out, names, erows.Err()
+}
+
+// ListRecent returns messages across channels, newest-first (ts DESC).
+// Optional channelID filters to one channel. since/before are exclusive bounds.
+// next_before is the oldest ts in the page when more rows exist (for pagination).
+func (s *Store) ListRecent(channelID string, since, before *time.Time, limit int) ([]Event, *time.Time, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	q := `SELECT event_id, ts, channel_type, channel_id, from_agent_id, from_name, to_agent_id, group_id, priority, body, source, dedupe_key FROM events WHERE 1=1`
+	args := []any{}
+	if channelID != "" {
+		q += ` AND channel_id=?`
+		args = append(args, channelID)
+	}
+	if since != nil {
+		q += ` AND ts > ?`
+		args = append(args, since.UTC().Format(time.RFC3339Nano))
+	}
+	if before != nil {
+		q += ` AND ts < ?`
+		args = append(args, before.UTC().Format(time.RFC3339Nano))
+	}
+	q += ` ORDER BY ts DESC LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		ev, err := scanEvent(rows)
+		if err != nil {
+			return nil, nil, err
+		}
+		items = append(items, ev)
+	}
+	var nextBefore *time.Time
+	if len(items) > limit {
+		t := items[limit-1].TS
+		nextBefore = &t
+		items = items[:limit]
+	}
+	return items, nextBefore, rows.Err()
 }

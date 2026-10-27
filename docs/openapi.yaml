@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: Magi Bot Panel API
-  version: 0.2.0
+  version: 0.3.0
   description: |
-    API local (Tailscale-only) do painel Magi de conversas entre bots (L2S-43).
-    ADR-002 rev.4 — ingest tipado + projeção grafo (agents/edges) + WebSocket.
-    Sem superfície pública. Sem POST /v1/presence.
+    API local (Tailscale-only) do painel Magi de conversas entre bots (L2S-43 / L2S-54).
+    ADR-002 rev.5 — feed global + waiting/pending + ingest tipado + grafo + WebSocket.
+    Sem superfície pública. Sem MAGI_PANEL_TOKEN (Tailscale-only). Sem POST /v1/presence.
 servers:
   - url: http://{magi_host}:8787
     description: Magi via Tailscale / localhost (Compose default; override with BIND_ADDR)
@@ -32,7 +32,7 @@ paths:
 
   /v1/events:
     post:
-      summary: Ingest tipado (message | edge.sending | agent.status | agent.heartbeat)
+      summary: Ingest tipado (message | edge.sending | edge.pending | agent.status | agent.heartbeat)
       operationId: ingestEvent
       security:
         - HmacSignature: []
@@ -44,6 +44,7 @@ paths:
               oneOf:
                 - $ref: "#/components/schemas/IngestMessage"
                 - $ref: "#/components/schemas/IngestEdgeSending"
+                - $ref: "#/components/schemas/IngestEdgePending"
                 - $ref: "#/components/schemas/IngestAgentStatus"
                 - $ref: "#/components/schemas/IngestAgentHeartbeat"
               discriminator:
@@ -134,6 +135,47 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/messages:
+    get:
+      summary: Feed global (newest-first) — seed da barra direita UX v8
+      operationId: listRecentMessages
+      description: |
+        Retorna MessageEvent[] ordenados por `ts` DESC (mais recente primeiro).
+        Paginação via `before` (exclusive upper bound, RFC3339Nano).
+        Filtro opcional `channel_id`. Sem inventar status rows.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: before
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Exclusive upper bound (RFC3339Nano) for older page
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Exclusive lower bound (same semantics as channel messages)
+        - name: channel_id
+          in: query
+          schema:
+            type: string
+          description: Optional filter to one channel
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalMessageList"
+
   /v1/channels/{channelId}/messages:
     get:
       summary: Timeline do drawer (read-only)
@@ -169,17 +211,18 @@ paths:
 
   /v1/stream:
     get:
-      summary: WebSocket — message | edge.sending | edge.idle | agent.status | hello | ping
+      summary: WebSocket — message | edge.sending | edge.pending | edge.idle | agent.status | hello | ping
       operationId: stream
       description: |
-        Upgrade WebSocket. Frames JSON:
+        Upgrade WebSocket (global). Frames JSON:
         - `hello` — no connect
         - `ping` — keepalive (~25s)
-        - `message` — MessageEvent; também limpa `sending` da aresta
-        - `edge.sending` — `{type, channel_id, from_agent_id}` (presença do frame = active)
-        - `edge.idle` — clear de blink (TTL server ~12s ou após `message`)
-        - `agent.status` — `{type, agent_id, status, status_text}`
-        Token opcional `?token=` / Bearer se `MAGI_PANEL_TOKEN` setado.
+        - `message` — MessageEvent (inclui channel_id); limpa sending + pending da aresta
+        - `edge.sending` — `{type, channel_id, from_agent_id}` (blink ~12s)
+        - `edge.pending` — `{type, channel_id, from_agent_id, to_agent_id?}` (handoff ~30min)
+        - `edge.idle` — clear sending e/ou pending (TTL ou após `message`)
+        - `agent.status` — `{type, agent_id, status, status_text, waiting_for_agent_id?, waiting_for_name?}`
+        Auth: Tailscale-only (sem MAGI_PANEL_TOKEN).
       responses:
         "101":
           description: Switching Protocols
@@ -306,6 +349,32 @@ components:
         dedupe_key:
           type: string
 
+    IngestEdgePending:
+      type: object
+      required: [type, from_agent_id]
+      properties:
+        type:
+          type: string
+          enum: [edge.pending]
+        ts:
+          type: string
+          format: date-time
+        channel_id:
+          type: string
+        channel_type:
+          type: string
+          enum: [dm, group]
+        from_agent_id:
+          type: string
+        from_name:
+          type: string
+        to_agent_id:
+          type: string
+        group_id:
+          type: string
+        dedupe_key:
+          type: string
+
     IngestAgentStatus:
       type: object
       required: [type, agent_id, status]
@@ -322,10 +391,19 @@ components:
           type: string
         status:
           type: string
-          enum: [idle, busy, offline]
+          enum: [idle, busy, waiting, offline]
         status_text:
           type: string
-          description: Texto no nó retangular (UX v7)
+          description: Texto no nó retangular (UX v8)
+        waiting_for_agent_id:
+          type: string
+          nullable: true
+        waiting_for_name:
+          type: string
+          nullable: true
+        channel_id:
+          type: string
+          nullable: true
         dedupe_key:
           type: string
 
@@ -413,9 +491,15 @@ components:
           type: string
         status:
           type: string
-          enum: [idle, busy, offline]
+          enum: [idle, busy, waiting, offline]
         status_text:
           type: string
+        waiting_for_agent_id:
+          type: string
+          nullable: true
+        waiting_for_name:
+          type: string
+          nullable: true
         last_seen_at:
           type: string
           format: date-time
@@ -423,7 +507,7 @@ components:
 
     Edge:
       type: object
-      required: [channel_id, channel_type, participant_ids, sending]
+      required: [channel_id, channel_type, participant_ids, sending, pending]
       properties:
         channel_id:
           type: string
@@ -445,6 +529,14 @@ components:
         sending:
           type: boolean
         sending_from_agent_id:
+          type: string
+          nullable: true
+        pending:
+          type: boolean
+        pending_from_agent_id:
+          type: string
+          nullable: true
+        pending_to_agent_id:
           type: string
           nullable: true
 
@@ -502,6 +594,20 @@ components:
             $ref: "#/components/schemas/Channel"
         next_cursor:
           type: string
+          nullable: true
+
+    GlobalMessageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageEvent"
+          description: Newest-first (ts DESC)
+        next_before:
+          type: string
+          format: date-time
           nullable: true
 
     MessageList:

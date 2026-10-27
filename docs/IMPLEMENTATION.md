@@ -1,8 +1,8 @@
 # L2S-43 — implementação Backend (magi-bot-panel)
 
 Repo: `github.com/lfals/magi-bot-panel`  
-Issue: L2S-43  
-ADR: **ADR-002 rev.4** (Tailscale-only; Cloudflare Tunnel rejeitado; grafo UX v7)
+Issue: L2S-43 / L2S-54  
+ADR: **ADR-002 rev.5** (feed global + waiting/pending; Tailscale-only; Cloudflare Tunnel rejeitado)
 
 ## Escopo Backend
 
@@ -12,9 +12,9 @@ ADR: **ADR-002 rev.4** (Tailscale-only; Cloudflare Tunnel rejeitado; grafo UX v7
 
 ## Stack
 
-- Go 1.24 + `modernc.org/sqlite` (CGO-free) + `nhooyr.io/websocket`
+- Go 1.24+ + `modernc.org/sqlite` (CGO-free) + `nhooyr.io/websocket`
 - Pub/sub in-process (`hub`) para fan-out WS
-- Presença/`sending` em memória com TTL (~12s)
+- Presença/`sending`/`pending` em memória com TTL (`sending` ~12s; `pending` ~30 min)
 
 ## Env
 
@@ -22,33 +22,36 @@ ADR: **ADR-002 rev.4** (Tailscale-only; Cloudflare Tunnel rejeitado; grafo UX v7
 | --- | --- |
 | `L2S_BUS_HMAC_SECRET` | HMAC ingest (obrigatório; `MAGI_DEV=1` só local) |
 | `L2S_BUS_ALLOWLIST` | CSV agent UUIDs |
-| `MAGI_PANEL_TOKEN` | opcional auth WS/REST |
 | `BIND_ADDR` | default `0.0.0.0:8787` (Compose/Docker); pode ser `:8080` local |
 | `DATABASE_PATH` | `/data/events.sqlite` |
 | `RATE_LIMIT_PER_MIN` | default 120 por agent |
 
-## Endpoints (ADR-002 rev.4)
+**Nota:** `MAGI_PANEL_TOKEN` **removido** (Luis) — painel Tailscale-only; leitura REST/WS sem Bearer. HMAC+ALLOWLIST permanecem no ingest.
+
+## Endpoints (ADR-002 rev.5)
 
 | Método | Path | Notas |
 | --- | --- | --- |
-| `POST` | `/v1/events` | tipado: `message` \| `edge.sending` \| `agent.status` \| `agent.heartbeat` |
-| `GET` | `/v1/graph` | `{ agents[], edges[] }` |
+| `POST` | `/v1/events` | tipado: `message` \| `edge.sending` \| `edge.pending` \| `agent.status` \| `agent.heartbeat` |
+| `GET` | `/v1/graph` | `{ agents[], edges[] }` — agents com `waiting`/`waiting_for_*`; edges com `sending` + `pending` |
 | `GET` | `/v1/agents` | status dos nós |
 | `GET` | `/v1/channels` | lista canais |
 | `GET` | `/v1/channels/:id` | meta |
-| `GET` | `/v1/channels/:id/messages` | timeline drawer |
+| `GET` | `/v1/messages` | **feed global** newest-first (`limit`/`before`/`since`/`channel_id`) |
+| `GET` | `/v1/channels/:id/messages` | timeline por canal (inalterada; ASC) |
 | `GET` | `/v1/stream` | WS |
 | `GET` | `/healthz` | liveness |
 
-**Não existe** `POST /v1/presence`. Presence vai no mesmo `/v1/events`.
+**Não existe** `POST /v1/presence`. Presence vai no mesmo `/v1/events`. Sem tipo `feed.row` — FE deriva rows de estado.
 
 ## WS frames
 
 - `hello` / `ping`
-- `message` (não `message.created`) — limpa `sending` da aresta
-- `edge.sending` `{type, channel_id, from_agent_id}`
-- `edge.idle` — TTL ou pós-`message`
-- `agent.status` `{type, agent_id, status, status_text}` (não `bot.status`)
+- `message` (não `message.created`) — inclui `channel_id`; limpa `sending` **e** `pending` da aresta
+- `edge.sending` `{type, channel_id, from_agent_id}` — blink curto (~12s)
+- `edge.pending` `{type, channel_id, from_agent_id, to_agent_id?}` — handoff aberto (~30 min TTL)
+- `edge.idle` — clear sending e/ou pending (TTL ou pós-`message`)
+- `agent.status` `{type, agent_id, status, status_text, waiting_for_agent_id?, waiting_for_name?}`
 
 ## Regras
 
@@ -57,8 +60,10 @@ ADR: **ADR-002 rev.4** (Tailscale-only; Cloudflare Tunnel rejeitado; grafo UX v7
 3. Dedupe por `dedupe_key` em `message`
 4. Allowlist em `from_agent_id` / `agent_id`
 5. `sending` TTL ~12s → `edge.idle`
-6. Sem heartbeat / `last_seen_at` antigo → `offline`
-7. Commits humanos `lfals` — sem push de bot
+6. `pending` TTL ~30 min (ou clear em `message` / `edge.idle`) — distinct de sending
+7. `agent.status` aceita `idle|busy|waiting|offline` + `waiting_for_*` quando `waiting`
+8. Sem heartbeat / `last_seen_at` antigo → `offline`
+9. Commits humanos `lfals` — sem push de bot
 
 ## Testes
 

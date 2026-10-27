@@ -57,13 +57,15 @@ func (s *Server) Close() {
 }
 
 func (s *Server) routes() {
-	// Panel read routes: Tailscale-only trust (L2S-43). Ingest keeps HMAC.
+	// Panel routes: Tailscale-only (no MAGI_PANEL_TOKEN). HMAC remains on POST /v1/events.
+	// GET /healthz always public.
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /v1/events", s.handleIngest)
 	s.mux.HandleFunc("GET /v1/graph", s.handleGraph)
 	s.mux.HandleFunc("GET /v1/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /v1/channels", s.handleListChannels)
 	s.mux.HandleFunc("GET /v1/channels/{channelId}", s.handleGetChannel)
+	s.mux.HandleFunc("GET /v1/messages", s.handleListRecentMessages)
 	s.mux.HandleFunc("GET /v1/channels/{channelId}/messages", s.handleListMessages)
 	s.mux.HandleFunc("GET /v1/stream", s.handleStream)
 }
@@ -80,6 +82,13 @@ func (s *Server) ttlLoop() {
 				payload, _ := json.Marshal(map[string]any{
 					"type":       "edge.idle",
 					"channel_id": es.ChannelID,
+				})
+				s.hub.Broadcast(payload)
+			}
+			for _, ep := range s.presence.SweepExpiredPending(now) {
+				payload, _ := json.Marshal(map[string]any{
+					"type":       "edge.idle",
+					"channel_id": ep.ChannelID,
 				})
 				s.hub.Broadcast(payload)
 			}
@@ -120,12 +129,14 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		s.ingestMessage(w, raw, now)
 	case "edge.sending":
 		s.ingestEdgeSending(w, raw, now)
+	case "edge.pending":
+		s.ingestEdgePending(w, raw, now)
 	case "agent.status":
 		s.ingestAgentStatus(w, raw, now)
 	case "agent.heartbeat":
 		s.ingestAgentHeartbeat(w, raw, now)
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_request", "type must be message|edge.sending|agent.status|agent.heartbeat")
+		writeErr(w, http.StatusBadRequest, "bad_request", "type must be message|edge.sending|edge.pending|agent.status|agent.heartbeat")
 	}
 }
 
@@ -159,14 +170,15 @@ func (s *Server) ingestMessage(w http.ResponseWriter, raw []byte, now time.Time)
 		name = *stored.FromName
 	}
 	s.presence.Heartbeat(stored.FromAgentID, name, now)
-	cleared, _ := s.presence.ClearSending(stored.ChannelID)
+	clearedSending, _ := s.presence.ClearSending(stored.ChannelID)
+	clearedPending, _ := s.presence.ClearPending(stored.ChannelID)
 	if !dup {
 		payload, _ := json.Marshal(map[string]any{
 			"type":  "message",
 			"event": eventJSON(stored),
 		})
 		s.hub.Broadcast(payload)
-		if cleared {
+		if clearedSending || clearedPending {
 			idle, _ := json.Marshal(map[string]any{
 				"type":       "edge.idle",
 				"channel_id": stored.ChannelID,
@@ -261,15 +273,99 @@ func (s *Server) ingestEdgeSending(w http.ResponseWriter, raw []byte, now time.T
 	})
 }
 
+type edgePendingIn struct {
+	Type        string            `json:"type"`
+	TS          string            `json:"ts"`
+	ChannelID   string            `json:"channel_id"`
+	ChannelType store.ChannelType `json:"channel_type"`
+	FromAgentID string            `json:"from_agent_id"`
+	FromName    *string           `json:"from_name"`
+	ToAgentID   *string           `json:"to_agent_id"`
+	GroupID     *string           `json:"group_id"`
+	DedupeKey   string            `json:"dedupe_key"`
+}
+
+func (s *Server) ingestEdgePending(w http.ResponseWriter, raw []byte, now time.Time) {
+	var in edgePendingIn
+	if err := json.Unmarshal(raw, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid json")
+		return
+	}
+	if strings.TrimSpace(in.FromAgentID) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "from_agent_id required")
+		return
+	}
+	if !s.cfg.Allowlisted(in.FromAgentID) {
+		writeErr(w, http.StatusForbidden, "forbidden", "from_agent_id not in allowlist")
+		return
+	}
+	if !s.limiter.Allow(in.FromAgentID, now) {
+		writeErr(w, http.StatusTooManyRequests, "rate_limited", "rate limit exceeded")
+		return
+	}
+	channelID := strings.TrimSpace(in.ChannelID)
+	ct := in.ChannelType
+	if channelID == "" {
+		if ct == "" {
+			if in.GroupID != nil && strings.TrimSpace(*in.GroupID) != "" {
+				ct = store.ChannelGroup
+			} else {
+				ct = store.ChannelDM
+			}
+		}
+		var err error
+		channelID, err = store.DeriveChannelID(ct, in.FromAgentID, in.ToAgentID, in.GroupID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+	}
+	if ct == "" {
+		ct = store.ChannelDM
+		if in.GroupID != nil && strings.TrimSpace(*in.GroupID) != "" {
+			ct = store.ChannelGroup
+		}
+	}
+	toID := ""
+	if in.ToAgentID != nil {
+		toID = strings.TrimSpace(*in.ToAgentID)
+	}
+	_ = s.store.EnsureChannel(channelID, ct, in.FromAgentID, in.ToAgentID, in.GroupID, "")
+	name := ""
+	if in.FromName != nil {
+		name = *in.FromName
+	}
+	s.presence.Heartbeat(in.FromAgentID, name, now)
+	ep := s.presence.SetPending(channelID, in.FromAgentID, toID, now)
+	frame := map[string]any{
+		"type":          "edge.pending",
+		"channel_id":    ep.ChannelID,
+		"from_agent_id": ep.FromAgentID,
+	}
+	if ep.ToAgentID != "" {
+		frame["to_agent_id"] = ep.ToAgentID
+	}
+	payload, _ := json.Marshal(frame)
+	s.hub.Broadcast(payload)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"type":     "edge.pending",
+		"event":    frame,
+	})
+}
+
 type agentStatusIn struct {
-	Type       string  `json:"type"`
-	TS         string  `json:"ts"`
-	AgentID    string  `json:"agent_id"`
-	FromName   *string `json:"from_name"`
-	Name       *string `json:"name"`
-	Status     string  `json:"status"`
-	StatusText string  `json:"status_text"`
-	DedupeKey  string  `json:"dedupe_key"`
+	Type              string  `json:"type"`
+	TS                string  `json:"ts"`
+	AgentID           string  `json:"agent_id"`
+	FromName          *string `json:"from_name"`
+	Name              *string `json:"name"`
+	Status            string  `json:"status"`
+	StatusText        string  `json:"status_text"`
+	WaitingForAgentID *string `json:"waiting_for_agent_id"`
+	WaitingForName    *string `json:"waiting_for_name"`
+	ChannelID         *string `json:"channel_id"`
+	DedupeKey         string  `json:"dedupe_key"`
 }
 
 func (s *Server) ingestAgentStatus(w http.ResponseWriter, raw []byte, now time.Time) {
@@ -292,9 +388,9 @@ func (s *Server) ingestAgentStatus(w http.ResponseWriter, raw []byte, now time.T
 	}
 	st := strings.TrimSpace(in.Status)
 	switch st {
-	case presence.StatusIdle, presence.StatusBusy, presence.StatusOffline:
+	case presence.StatusIdle, presence.StatusBusy, presence.StatusWaiting, presence.StatusOffline:
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_request", "status must be idle|busy|offline")
+		writeErr(w, http.StatusBadRequest, "bad_request", "status must be idle|busy|waiting|offline")
 		return
 	}
 	name := ""
@@ -303,23 +399,21 @@ func (s *Server) ingestAgentStatus(w http.ResponseWriter, raw []byte, now time.T
 	} else if in.FromName != nil {
 		name = *in.FromName
 	}
-	a := s.presence.TouchAgent(in.AgentID, name, st, in.StatusText, now)
-	payload, _ := json.Marshal(map[string]any{
-		"type":        "agent.status",
-		"agent_id":    a.AgentID,
-		"status":      a.Status,
-		"status_text": a.StatusText,
-	})
+	waitID, waitName := "", ""
+	if in.WaitingForAgentID != nil {
+		waitID = strings.TrimSpace(*in.WaitingForAgentID)
+	}
+	if in.WaitingForName != nil {
+		waitName = strings.TrimSpace(*in.WaitingForName)
+	}
+	a := s.presence.TouchAgent(in.AgentID, name, st, in.StatusText, waitID, waitName, now)
+	frame := agentStatusFrame(a)
+	payload, _ := json.Marshal(frame)
 	s.hub.Broadcast(payload)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted": true,
 		"type":     "agent.status",
-		"event": map[string]any{
-			"type":        "agent.status",
-			"agent_id":    a.AgentID,
-			"status":      a.Status,
-			"status_text": a.StatusText,
-		},
+		"event":    frame,
 	})
 }
 
@@ -358,13 +452,9 @@ func (s *Server) ingestAgentHeartbeat(w http.ResponseWriter, raw []byte, now tim
 	}
 	prev, had := s.presence.GetAgent(in.AgentID, now)
 	a := s.presence.Heartbeat(in.AgentID, name, now)
-	if !had || prev.Status != a.Status || prev.StatusText != a.StatusText {
-		payload, _ := json.Marshal(map[string]any{
-			"type":        "agent.status",
-			"agent_id":    a.AgentID,
-			"status":      a.Status,
-			"status_text": a.StatusText,
-		})
+	if !had || prev.Status != a.Status || prev.StatusText != a.StatusText ||
+		prev.WaitingForAgentID != a.WaitingForAgentID || prev.WaitingForName != a.WaitingForName {
+		payload, _ := json.Marshal(agentStatusFrame(a))
 		s.hub.Broadcast(payload)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
@@ -428,18 +518,7 @@ func (s *Server) buildAgents(now time.Time) ([]map[string]any, error) {
 	snap := s.presence.SnapshotAgents(ids, names, now)
 	out := make([]map[string]any, 0, len(snap))
 	for _, a := range snap {
-		m := map[string]any{
-			"agent_id":    a.AgentID,
-			"name":        a.Name,
-			"status":      a.Status,
-			"status_text": a.StatusText,
-		}
-		if !a.LastSeenAt.IsZero() {
-			m["last_seen_at"] = a.LastSeenAt.UTC().Format(time.RFC3339Nano)
-		} else {
-			m["last_seen_at"] = nil
-		}
-		out = append(out, m)
+		out = append(out, agentJSON(a))
 	}
 	return out, nil
 }
@@ -450,6 +529,7 @@ func (s *Server) buildEdges(now time.Time) ([]map[string]any, error) {
 		return nil, err
 	}
 	sending := s.presence.AllSending(now)
+	pending := s.presence.AllPending(now)
 	out := make([]map[string]any, 0, len(channels))
 	for _, c := range channels {
 		pids := make([]string, 0, len(c.Participants))
@@ -461,6 +541,7 @@ func (s *Server) buildEdges(now time.Time) ([]map[string]any, error) {
 			"channel_type":    c.ChannelType,
 			"participant_ids": pids,
 			"sending":         false,
+			"pending":         false,
 		}
 		if c.Label != "" {
 			m["label"] = c.Label
@@ -476,6 +557,13 @@ func (s *Server) buildEdges(now time.Time) ([]map[string]any, error) {
 		if es, ok := sending[c.ChannelID]; ok {
 			m["sending"] = true
 			m["sending_from_agent_id"] = es.FromAgentID
+		}
+		if ep, ok := pending[c.ChannelID]; ok {
+			m["pending"] = true
+			m["pending_from_agent_id"] = ep.FromAgentID
+			if ep.ToAgentID != "" {
+				m["pending_to_agent_id"] = ep.ToAgentID
+			}
 		}
 		out = append(out, m)
 	}
@@ -511,6 +599,42 @@ func (s *Server) handleGetChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, channelsJSON([]store.Channel{c})[0])
+}
+
+func (s *Server) handleListRecentMessages(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id"))
+	var since, before *time.Time
+	if v := r.URL.Query().Get("since"); v != "" {
+		t, err := parseTime(v)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", "invalid since")
+			return
+		}
+		since = &t
+	}
+	if v := r.URL.Query().Get("before"); v != "" {
+		t, err := parseTime(v)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", "invalid before")
+			return
+		}
+		before = &t
+	}
+	items, nextBefore, err := s.store.ListRecent(channelID, since, before, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := map[string]any{
+		"items": eventsJSON(items),
+	}
+	if nextBefore != nil {
+		out["next_before"] = nextBefore.UTC().Format(time.RFC3339Nano)
+	} else {
+		out["next_before"] = nil
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
@@ -616,6 +740,47 @@ func parseTime(v string) (time.Time, error) {
 		return t, nil
 	}
 	return time.Parse(time.RFC3339, v)
+}
+
+func agentStatusFrame(a presence.Agent) map[string]any {
+	m := map[string]any{
+		"type":        "agent.status",
+		"agent_id":    a.AgentID,
+		"status":      a.Status,
+		"status_text": a.StatusText,
+	}
+	if a.WaitingForAgentID != "" {
+		m["waiting_for_agent_id"] = a.WaitingForAgentID
+	}
+	if a.WaitingForName != "" {
+		m["waiting_for_name"] = a.WaitingForName
+	}
+	return m
+}
+
+func agentJSON(a presence.Agent) map[string]any {
+	m := map[string]any{
+		"agent_id":    a.AgentID,
+		"name":        a.Name,
+		"status":      a.Status,
+		"status_text": a.StatusText,
+	}
+	if a.WaitingForAgentID != "" {
+		m["waiting_for_agent_id"] = a.WaitingForAgentID
+	} else {
+		m["waiting_for_agent_id"] = nil
+	}
+	if a.WaitingForName != "" {
+		m["waiting_for_name"] = a.WaitingForName
+	} else {
+		m["waiting_for_name"] = nil
+	}
+	if !a.LastSeenAt.IsZero() {
+		m["last_seen_at"] = a.LastSeenAt.UTC().Format(time.RFC3339Nano)
+	} else {
+		m["last_seen_at"] = nil
+	}
+	return m
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
