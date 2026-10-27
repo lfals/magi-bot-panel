@@ -101,6 +101,57 @@ body {
   min-height: 0;
   overflow: hidden;
   background: radial-gradient(circle at 1px 1px, #1a2230 1px, transparent 0) 0 0 / 22px 22px;
+  cursor: grab;
+  touch-action: none;
+}
+.canvas-wrap.panning { cursor: grabbing; }
+.viewport {
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.viewport svg.graph { width: 100%; height: 100%; }
+.zoom-bar {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+.zoom-bar button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+.zoom-bar button:hover { background: var(--bg-hover); border-color: #3a465c; }
+.zoom-bar button:disabled { opacity: 0.35; cursor: default; }
+.zoom-bar .zoom-pct {
+  min-width: 44px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+.zoom-bar .reset {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .banner {

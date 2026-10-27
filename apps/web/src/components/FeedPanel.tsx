@@ -101,7 +101,9 @@ export function FeedPanel({
         </h1>
         <div className="sub">Msgs + estados · card = status_text · sem composer</div>
         <div className="order-note">
-          Ordem: <strong>mais recente em cima</strong> (stream de monitoramento).
+          Ordem: <strong>mais recente em cima</strong>.
+          <br />
+          Card = <strong>status_text</strong> / <strong>livre</strong>. Board: pan + zoom; feed fixo (não zooma).
         </div>
         <div className="legend-mini">
           <span>

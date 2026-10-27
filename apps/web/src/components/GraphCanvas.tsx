@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -59,6 +60,11 @@ type GroupDrawable = {
 }
 
 type EdgeDrawable = DmDrawable | GroupDrawable
+
+const MIN_Z = 0.5
+const MAX_Z = 2
+const STEP = 0.1
+const FIT_PAD = 40
 
 function resolveMemberSlugs(
   participantIds: string[],
@@ -172,6 +178,39 @@ function cardStatusLabel(agent: { status: string; status_text: string }): string
   return t
 }
 
+function cardsBBox(
+  positions: Record<string, NodePos>,
+  agents: Agent[],
+): { x: number; y: number; w: number; h: number } | null {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let any = false
+  for (const agent of agents) {
+    const slug = layoutSlug(agent.agent_id)
+    if (!slug) continue
+    const pos = positions[slug]
+    if (!pos) continue
+    any = true
+    minX = Math.min(minX, pos.x)
+    minY = Math.min(minY, pos.y)
+    maxX = Math.max(maxX, pos.x + NODE_W)
+    maxY = Math.max(maxY, pos.y + NODE_H)
+  }
+  if (!any) {
+    for (const pos of Object.values(positions)) {
+      any = true
+      minX = Math.min(minX, pos.x)
+      minY = Math.min(minY, pos.y)
+      maxX = Math.max(maxX, pos.x + NODE_W)
+      maxY = Math.max(maxY, pos.y + NODE_H)
+    }
+  }
+  if (!any) return null
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
 export function GraphCanvas({
   agents,
   edges,
@@ -181,6 +220,17 @@ export function GraphCanvas({
   onSelectAgent,
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const boardRef = useRef<HTMLDivElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const zoomPctRef = useRef<HTMLSpanElement | null>(null)
+  const btnInRef = useRef<HTMLButtonElement | null>(null)
+  const btnOutRef = useRef<HTMLButtonElement | null>(null)
+  const viewRef = useRef({ scale: 1, tx: 0, ty: 0 })
+  const panRef = useRef<{ active: boolean; px: number; py: number }>({
+    active: false,
+    px: 0,
+    py: 0,
+  })
   const { positions, setPosition } = useNodePositions()
   const dragRef = useRef<{
     slug: string
@@ -194,6 +244,139 @@ export function GraphCanvas({
     () => buildEdgeDrawables(edges, positions),
     [edges, positions],
   )
+
+  const applyView = useCallback(() => {
+    const { scale, tx, ty } = viewRef.current
+    const vp = viewportRef.current
+    if (vp) {
+      vp.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`
+    }
+    if (zoomPctRef.current) {
+      zoomPctRef.current.textContent = `${Math.round(scale * 100)}%`
+    }
+    if (btnOutRef.current) {
+      btnOutRef.current.disabled = scale <= MIN_Z + 0.001
+    }
+    if (btnInRef.current) {
+      btnInRef.current.disabled = scale >= MAX_Z - 0.001
+    }
+  }, [])
+
+  useEffect(() => {
+    applyView()
+  }, [applyView])
+
+  const zoomAt = useCallback(
+    (clientX: number, clientY: number, next: number) => {
+      const board = boardRef.current
+      if (!board) return
+      next = Math.min(MAX_Z, Math.max(MIN_Z, next))
+      const { scale, tx, ty } = viewRef.current
+      if (Math.abs(next - scale) < 1e-9) {
+        applyView()
+        return
+      }
+      const rect = board.getBoundingClientRect()
+      const x = clientX - rect.left
+      const y = clientY - rect.top
+      viewRef.current = {
+        scale: next,
+        tx: x - (x - tx) * (next / scale),
+        ty: y - (y - ty) * (next / scale),
+      }
+      applyView()
+    },
+    [applyView],
+  )
+
+  const fitAll = useCallback(() => {
+    const board = boardRef.current
+    if (!board) return
+    const rect = board.getBoundingClientRect()
+    const content = cardsBBox(positions, agents)
+    if (!content || content.w <= 0 || content.h <= 0) {
+      viewRef.current = { scale: 1, tx: 0, ty: 0 }
+      applyView()
+      return
+    }
+    // SVG uses meet: map viewBox → board pixels (untransformed)
+    const s0 = Math.min(rect.width / VIEW_W, rect.height / VIEW_H)
+    const ox = (rect.width - VIEW_W * s0) / 2
+    const oy = (rect.height - VIEW_H * s0) / 2
+    const contentPxW = content.w * s0
+    const contentPxH = content.h * s0
+    const contentLeft = ox + content.x * s0
+    const contentTop = oy + content.y * s0
+    const sx = (rect.width - FIT_PAD * 2) / contentPxW
+    const sy = (rect.height - FIT_PAD * 2) / contentPxH
+    const next = Math.min(MAX_Z, Math.max(MIN_Z, Math.min(sx, sy)))
+    const availW = rect.width - FIT_PAD * 2
+    const availH = rect.height - FIT_PAD * 2
+    viewRef.current = {
+      scale: next,
+      tx: FIT_PAD + (availW - contentPxW * next) / 2 - contentLeft * next,
+      ty: FIT_PAD + (availH - contentPxH * next) / 2 - contentTop * next,
+    }
+    applyView()
+  }, [agents, positions, applyView])
+
+  useEffect(() => {
+    const board = boardRef.current
+    if (!board) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const dir = e.deltaY > 0 ? -STEP : STEP
+      zoomAt(e.clientX, e.clientY, viewRef.current.scale + dir)
+    }
+    board.addEventListener('wheel', onWheel, { passive: false })
+    return () => board.removeEventListener('wheel', onWheel)
+  }, [zoomAt])
+
+  const onBoardPointerDown = useCallback((e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    const t = e.target as Element | null
+    if (
+      t?.closest?.(
+        '.node, .edge, .edge-hit, .zoom-bar, button, .banner, .empty-canvas, .loading-canvas',
+      )
+    ) {
+      return
+    }
+    const { tx, ty } = viewRef.current
+    panRef.current = {
+      active: true,
+      px: e.clientX - tx,
+      py: e.clientY - ty,
+    }
+    boardRef.current?.classList.add('panning')
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  }, [])
+
+  const onBoardPointerMove = useCallback(
+    (e: ReactPointerEvent) => {
+      if (!panRef.current.active) return
+      viewRef.current = {
+        ...viewRef.current,
+        tx: e.clientX - panRef.current.px,
+        ty: e.clientY - panRef.current.py,
+      }
+      applyView()
+    },
+    [applyView],
+  )
+
+  const endPan = useCallback((e?: ReactPointerEvent) => {
+    if (!panRef.current.active) return
+    panRef.current.active = false
+    boardRef.current?.classList.remove('panning')
+    if (e) {
+      try {
+        ;(e.currentTarget as Element).releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+    }
+  }, [])
 
   const onNodePointerDown = useCallback(
     (slug: string, e: ReactPointerEvent) => {
@@ -255,8 +438,29 @@ export function GraphCanvas({
     [onSelectAgent, edges],
   )
 
+  const zoomByButton = useCallback(
+    (delta: number) => {
+      const board = boardRef.current
+      if (!board) return
+      const r = board.getBoundingClientRect()
+      zoomAt(
+        r.left + r.width / 2,
+        r.top + r.height / 2,
+        viewRef.current.scale + delta,
+      )
+    },
+    [zoomAt],
+  )
+
   return (
-    <div className="canvas-wrap">
+    <div
+      className="canvas-wrap"
+      ref={boardRef}
+      onPointerDown={onBoardPointerDown}
+      onPointerMove={onBoardPointerMove}
+      onPointerUp={endPan}
+      onPointerCancel={() => endPan()}
+    >
       <div className="banner delayed">
         Atraso no grafo — última atividade &gt;30s. Reconectando WS…
       </div>
@@ -278,52 +482,27 @@ export function GraphCanvas({
         </div>
       </div>
 
-      <svg
-        ref={svgRef}
-        className="graph"
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-        preserveAspectRatio="xMidYMid meet"
-      >
-        <g id="edges">
-          {drawables.map((item) => {
-            if (item.kind === 'dm') {
-              const isSelected = highlightChannelIds.has(item.channelId)
-              const cls = edgeClassName(
-                ['edge', item.edge.channel_type || 'dm'],
-                item.edge,
-                isSelected,
-              )
-              return (
-                <g key={item.channelId}>
-                  <path
-                    className="edge-hit"
-                    d={item.d}
-                    onClick={(ev) => {
-                      ev.stopPropagation()
-                      onSelectChannel(item.channelId)
-                    }}
-                  />
-                  <path
-                    className={cls}
-                    d={item.d}
-                    onClick={(ev) => {
-                      ev.stopPropagation()
-                      onSelectChannel(item.channelId)
-                    }}
-                  />
-                </g>
-              )
-            }
-
-            const isSelected = highlightChannelIds.has(item.channelId)
-            const cls = edgeClassName(['edge', 'group'], item.edge, isSelected)
-            return (
-              <g key={item.channelId}>
-                {item.segs.map((seg) => (
-                  <g key={seg.key}>
+      <div className="viewport" ref={viewportRef}>
+        <svg
+          ref={svgRef}
+          className="graph"
+          viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <g id="edges">
+            {drawables.map((item) => {
+              if (item.kind === 'dm') {
+                const isSelected = highlightChannelIds.has(item.channelId)
+                const cls = edgeClassName(
+                  ['edge', item.edge.channel_type || 'dm'],
+                  item.edge,
+                  isSelected,
+                )
+                return (
+                  <g key={item.channelId}>
                     <path
                       className="edge-hit"
-                      d={seg.d}
+                      d={item.d}
                       onClick={(ev) => {
                         ev.stopPropagation()
                         onSelectChannel(item.channelId)
@@ -331,123 +510,180 @@ export function GraphCanvas({
                     />
                     <path
                       className={cls}
-                      d={seg.d}
+                      d={item.d}
                       onClick={(ev) => {
                         ev.stopPropagation()
                         onSelectChannel(item.channelId)
                       }}
                     />
                   </g>
-                ))}
+                )
+              }
+
+              const isSelected = highlightChannelIds.has(item.channelId)
+              const cls = edgeClassName(['edge', 'group'], item.edge, isSelected)
+              return (
+                <g key={item.channelId}>
+                  {item.segs.map((seg) => (
+                    <g key={seg.key}>
+                      <path
+                        className="edge-hit"
+                        d={seg.d}
+                        onClick={(ev) => {
+                          ev.stopPropagation()
+                          onSelectChannel(item.channelId)
+                        }}
+                      />
+                      <path
+                        className={cls}
+                        d={seg.d}
+                        onClick={(ev) => {
+                          ev.stopPropagation()
+                          onSelectChannel(item.channelId)
+                        }}
+                      />
+                    </g>
+                  ))}
+                </g>
+              )
+            })}
+          </g>
+
+          <g pointerEvents="none">
+            {drawables.map((item) => {
+              if (item.kind === 'dm') {
+                const isSending = item.edge.sending
+                const isPending = !isSending && item.edge.pending
+                let text = item.label
+                if (isSending) text = 'DM · enviando…'
+                else if (isPending) text = 'DM · aguardando…'
+                return (
+                  <text
+                    key={`lbl-${item.channelId}`}
+                    className={[
+                      'edge-label',
+                      isSending ? 'sending' : '',
+                      isPending ? 'pending' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    x={item.labelX}
+                    y={item.labelY}
+                  >
+                    {text}
+                  </text>
+                )
+              }
+              return item.segs
+                .filter((s) => s.showLabel)
+                .map((seg) => (
+                  <text
+                    key={`lbl-${item.channelId}:${seg.key}`}
+                    className="edge-label group"
+                    x={seg.labelX}
+                    y={seg.labelY}
+                  >
+                    {item.label}
+                  </text>
+                ))
+            })}
+          </g>
+
+          {agents.map((agent) => {
+            const slug = layoutSlug(agent.agent_id)
+            if (!slug) return null
+            const pos = positions[slug]
+            if (!pos) return null
+            const inHighlightedEdge = edges.some(
+              (e) =>
+                highlightChannelIds.has(e.channel_id) &&
+                e.participant_ids.some(
+                  (pid) =>
+                    pid === agent.agent_id || layoutSlug(pid) === slug,
+                ),
+            )
+            const isSelected =
+              selectedAgentId === agent.agent_id || inHighlightedEdge
+            const role = displayRoleForAgent(agent.agent_id, agent.role)
+            const name = displayNameForAgent(agent.agent_id, agent.name)
+            const isDragging = draggingSlug === slug
+            const inn = inputPort({ x: 0, y: 0 })
+            const out = outputPort({ x: 0, y: 0 })
+            const statusClass =
+              agent.status === 'busy'
+                ? 'busy'
+                : agent.status === 'waiting'
+                  ? 'waiting'
+                  : ''
+
+            return (
+              <g
+                key={agent.agent_id}
+                className={[
+                  'node',
+                  isSelected ? 'selected' : '',
+                  statusClass,
+                  isDragging ? 'dragging' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                transform={`translate(${pos.x},${pos.y})`}
+                onPointerDown={(e) => onNodePointerDown(slug, e)}
+                onPointerMove={onNodePointerMove}
+                onPointerUp={(e) => onNodePointerUp(agent.agent_id, slug, e)}
+                onPointerCancel={() => {
+                  dragRef.current = null
+                  setDraggingSlug(null)
+                }}
+              >
+                <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
+                <circle className="port port-in" cx={inn.x} cy={inn.y} r={4} />
+                <circle className="port port-out" cx={out.x} cy={out.y} r={4} />
+                <circle className="pulse-dot" cx={NODE_W - 10} cy={10} r={4} />
+                <text className="role" x={12} y={16}>
+                  {role}
+                </text>
+                <text className="name" x={12} y={34}>
+                  {name}
+                </text>
+                <text className="status" x={12} y={52}>
+                  {cardStatusLabel(agent)}
+                </text>
               </g>
             )
           })}
-        </g>
+        </svg>
+      </div>
 
-        <g pointerEvents="none">
-          {drawables.map((item) => {
-            if (item.kind === 'dm') {
-              const isSending = item.edge.sending
-              const isPending = !isSending && item.edge.pending
-              let text = item.label
-              if (isSending) text = 'DM · enviando…'
-              else if (isPending) text = 'DM · aguardando…'
-              return (
-                <text
-                  key={`lbl-${item.channelId}`}
-                  className={[
-                    'edge-label',
-                    isSending ? 'sending' : '',
-                    isPending ? 'pending' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  x={item.labelX}
-                  y={item.labelY}
-                >
-                  {text}
-                </text>
-              )
-            }
-            return item.segs
-              .filter((s) => s.showLabel)
-              .map((seg) => (
-                <text
-                  key={`lbl-${item.channelId}:${seg.key}`}
-                  className="edge-label group"
-                  x={seg.labelX}
-                  y={seg.labelY}
-                >
-                  {item.label}
-                </text>
-              ))
-          })}
-        </g>
-
-        {agents.map((agent) => {
-          const slug = layoutSlug(agent.agent_id)
-          if (!slug) return null
-          const pos = positions[slug]
-          if (!pos) return null
-          const inHighlightedEdge = edges.some(
-            (e) =>
-              highlightChannelIds.has(e.channel_id) &&
-              e.participant_ids.some(
-                (pid) =>
-                  pid === agent.agent_id || layoutSlug(pid) === slug,
-              ),
-          )
-          const isSelected =
-            selectedAgentId === agent.agent_id || inHighlightedEdge
-          const role = displayRoleForAgent(agent.agent_id, agent.role)
-          const name = displayNameForAgent(agent.agent_id, agent.name)
-          const isDragging = draggingSlug === slug
-          const inn = inputPort({ x: 0, y: 0 })
-          const out = outputPort({ x: 0, y: 0 })
-          const statusClass =
-            agent.status === 'busy'
-              ? 'busy'
-              : agent.status === 'waiting'
-                ? 'waiting'
-                : ''
-
-          return (
-            <g
-              key={agent.agent_id}
-              className={[
-                'node',
-                isSelected ? 'selected' : '',
-                statusClass,
-                isDragging ? 'dragging' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              transform={`translate(${pos.x},${pos.y})`}
-              onPointerDown={(e) => onNodePointerDown(slug, e)}
-              onPointerMove={onNodePointerMove}
-              onPointerUp={(e) => onNodePointerUp(agent.agent_id, slug, e)}
-              onPointerCancel={() => {
-                dragRef.current = null
-                setDraggingSlug(null)
-              }}
-            >
-              <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
-              <circle className="port port-in" cx={inn.x} cy={inn.y} r={4} />
-              <circle className="port port-out" cx={out.x} cy={out.y} r={4} />
-              <circle className="pulse-dot" cx={NODE_W - 10} cy={10} r={4} />
-              <text className="role" x={12} y={16}>
-                {role}
-              </text>
-              <text className="name" x={12} y={34}>
-                {name}
-              </text>
-              <text className="status" x={12} y={52}>
-                {cardStatusLabel(agent)}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
+      <div className="zoom-bar" aria-label="Controles de zoom">
+        <button
+          type="button"
+          ref={btnOutRef}
+          title="Zoom out"
+          onClick={() => zoomByButton(-STEP)}
+        >
+          −
+        </button>
+        <span className="zoom-pct" ref={zoomPctRef}>
+          100%
+        </span>
+        <button
+          type="button"
+          ref={btnInRef}
+          title="Zoom in"
+          onClick={() => zoomByButton(STEP)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="reset"
+          title="Fit all nodes"
+          onClick={fitAll}
+        >
+          fit
+        </button>
+      </div>
     </div>
   )
 }
