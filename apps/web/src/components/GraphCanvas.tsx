@@ -8,6 +8,7 @@ import {
   VIEW_H,
   VIEW_W,
 } from '../layout/positions'
+import { layoutSlug, metaForAgentId } from '../layout/agentMap'
 
 type Props = {
   agents: Agent[]
@@ -131,11 +132,19 @@ export function GraphCanvas({
         </g>
 
         {agents.map((agent) => {
-          const pos = NODE_POS[agent.agent_id]
+          const meta = metaForAgentId(agent.agent_id)
+          const slug = layoutSlug(agent.agent_id)
+          if (!slug) return null
+          const pos = NODE_POS[slug]
           if (!pos) return null
-          const primary = NODE_PRIMARY_CHANNEL[agent.agent_id]
-          const isSending = sendingFrom === agent.agent_id
+          const primary = NODE_PRIMARY_CHANNEL[slug]
+          const isSending =
+            sendingFrom === agent.agent_id || sendingFrom === slug
           const isSelected = selectedAgentId === agent.agent_id
+          const role = meta?.role ?? agent.role ?? 'bot'
+          const name =
+            meta?.name ??
+            (agent.name && agent.name !== agent.agent_id ? agent.name : slug)
 
           return (
             <g
@@ -156,10 +165,10 @@ export function GraphCanvas({
               <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
               <circle className="pulse-dot" cx={NODE_W - 10} cy={10} r={4} />
               <text className="role" x={12} y={16}>
-                {agent.role ?? 'bot'}
+                {role}
               </text>
               <text className="name" x={12} y={34}>
-                {agent.name}
+                {name}
               </text>
               <text className="status" x={12} y={52}>
                 {agent.status_text}

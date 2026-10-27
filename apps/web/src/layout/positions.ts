@@ -14,6 +14,11 @@ export const NODE_POS: Record<string, { x: number; y: number }> = {
   backend: { x: 146, y: 420 },
   arquiteto: { x: 650, y: 420 },
   devops: { x: 780, y: 268 },
+  // extras allowlist (fora do wireframe v7)
+  qa: { x: 346, y: 420 },
+  ciber: { x: 546, y: 420 },
+  sm: { x: 780, y: 420 },
+  'analista-bd': { x: 780, y: 156 },
 }
 
 export type EdgeSeg = {

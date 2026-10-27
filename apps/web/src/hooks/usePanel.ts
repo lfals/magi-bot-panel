@@ -61,7 +61,7 @@ function reduceEdges(edges: Edge[], event: WsEvent): Edge[] {
 
 export function usePanel() {
   const [uiState, setUiState] = useState<PanelUiState>('live')
-  const [sendingDemo, setSendingDemo] = useState(true)
+  const [sendingDemo, setSendingDemo] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
