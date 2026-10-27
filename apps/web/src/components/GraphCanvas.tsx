@@ -1,7 +1,11 @@
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { Agent, Edge } from '../types'
 import {
-  EDGE_SEGS,
   NODE_H,
   NODE_PRIMARY_CHANNEL,
   NODE_W,
@@ -9,7 +13,13 @@ import {
   VIEW_W,
 } from '../layout/positions'
 import { layoutSlug, metaForAgentId } from '../layout/agentMap'
-import { DM_EDGE_PAIRS, dmPath } from '../layout/edgeGeometry'
+import {
+  DM_EDGE_PAIRS,
+  dmCurve,
+  groupCurveSegs,
+  inputPort,
+  outputPort,
+} from '../layout/edgeGeometry'
 import { useNodePositions } from '../hooks/useNodePositions'
 
 type Props = {
@@ -97,10 +107,7 @@ export function GraphCanvas({
       const x = Math.min(Math.max(0, pt.x - drag.offsetX), VIEW_W - NODE_W)
       const y = Math.min(Math.max(0, pt.y - drag.offsetY), VIEW_H - NODE_H)
       const prev = positions[drag.slug]
-      if (
-        prev &&
-        (Math.abs(prev.x - x) > 2 || Math.abs(prev.y - y) > 2)
-      ) {
+      if (prev && (Math.abs(prev.x - x) > 2 || Math.abs(prev.y - y) > 2)) {
         drag.moved = true
       }
       setPosition(drag.slug, { x, y })
@@ -127,7 +134,7 @@ export function GraphCanvas({
     [onSelectAgent],
   )
 
-  const groupSegs = EDGE_SEGS.filter((s) => s.channel_id === 'group-l2s')
+  const groupSegs = groupCurveSegs(positions)
 
   return (
     <div className="canvas-wrap">
@@ -163,7 +170,7 @@ export function GraphCanvas({
             const a = positions[pair.a]
             const b = positions[pair.b]
             if (!a || !b) return null
-            const { d } = dmPath(a, b)
+            const { d } = dmCurve(pair.a, a, pair.b, b)
             const edge = edgeById(edges, pair.channel_id)
             const kind = edge?.channel_type ?? 'dm'
             const isSending = sendingChannel === pair.channel_id
@@ -181,51 +188,49 @@ export function GraphCanvas({
                 <path
                   className="edge-hit"
                   d={d}
-                  onClick={(e) => {
-                    e.stopPropagation()
+                  onClick={(ev) => {
+                    ev.stopPropagation()
                     onSelectChannel(pair.channel_id)
                   }}
                 />
                 <path
                   className={cls}
                   d={d}
-                  onClick={(e) => {
-                    e.stopPropagation()
+                  onClick={(ev) => {
+                    ev.stopPropagation()
                     onSelectChannel(pair.channel_id)
                   }}
                 />
               </g>
             )
           })}
-          {groupSegs.map((seg, i) => {
-            const edge = edgeById(edges, seg.channel_id)
-            const kind = edge?.channel_type ?? 'group'
-            const isSending = sendingChannel === seg.channel_id
-            const isSelected = selectedChannelId === seg.channel_id
+          {groupSegs.map((seg) => {
+            const isSending = sendingChannel === 'group-l2s'
+            const isSelected = selectedChannelId === 'group-l2s'
             const cls = [
               'edge',
-              kind,
+              'group',
               isSelected ? 'selected' : '',
               isSending ? 'sending' : '',
             ]
               .filter(Boolean)
               .join(' ')
             return (
-              <g key={`group-${i}`}>
+              <g key={seg.key}>
                 <path
                   className="edge-hit"
                   d={seg.d}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectChannel(seg.channel_id)
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    onSelectChannel('group-l2s')
                   }}
                 />
                 <path
                   className={cls}
                   d={seg.d}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectChannel(seg.channel_id)
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    onSelectChannel('group-l2s')
                   }}
                 />
               </g>
@@ -238,7 +243,7 @@ export function GraphCanvas({
             const a = positions[pair.a]
             const b = positions[pair.b]
             if (!a || !b) return null
-            const { labelX, labelY } = dmPath(a, b)
+            const { labelX, labelY } = dmCurve(pair.a, a, pair.b, b)
             const isSending = sendingChannel === pair.channel_id
             const text = isSending ? 'DM · enviando…' : pair.label
             return (
@@ -255,15 +260,15 @@ export function GraphCanvas({
             )
           })}
           {groupSegs
-            .filter((s) => s.label)
+            .filter((s) => s.showLabel)
             .map((seg) => (
               <text
-                key={`lbl-group-${seg.label!.x}`}
+                key={`lbl-${seg.key}`}
                 className="edge-label group"
-                x={seg.label!.x}
-                y={seg.label!.y}
+                x={seg.labelX}
+                y={seg.labelY}
               >
-                {seg.label!.text}
+                grupo L2S
               </text>
             ))}
         </g>
@@ -282,6 +287,8 @@ export function GraphCanvas({
             meta?.name ??
             (agent.name && agent.name !== agent.agent_id ? agent.name : slug)
           const isDragging = draggingSlug === slug
+          const inn = inputPort({ x: 0, y: 0 })
+          const out = outputPort({ x: 0, y: 0 })
 
           return (
             <g
@@ -304,6 +311,9 @@ export function GraphCanvas({
               }}
             >
               <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
+              {/* ports: input esquerda / output direita */}
+              <circle className="port port-in" cx={inn.x} cy={inn.y} r={4} />
+              <circle className="port port-out" cx={out.x} cy={out.y} r={4} />
               <circle className="pulse-dot" cx={NODE_W - 10} cy={10} r={4} />
               <text className="role" x={12} y={16}>
                 {role}

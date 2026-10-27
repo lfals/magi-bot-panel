@@ -376,3 +376,15 @@ svg.graph { width: 100%; height: 100%; display: block; }
 .graph .node { cursor: grab; touch-action: none; }
 .graph .node.dragging { cursor: grabbing; }
 .graph .node.dragging .card { filter: brightness(1.08); }
+
+.graph .port {
+  fill: var(--bg, #0f1419);
+  stroke: #3d4a63;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+.graph .port-in { stroke: color-mix(in srgb, var(--dm) 70%, #3d4a63); }
+.graph .port-out { stroke: color-mix(in srgb, var(--accent) 70%, #3d4a63); }
+.graph .edge {
+  fill: none;
+}
