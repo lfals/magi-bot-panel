@@ -57,14 +57,15 @@ func (s *Server) Close() {
 }
 
 func (s *Server) routes() {
+	// Panel read routes: Tailscale-only trust (L2S-43). Ingest keeps HMAC.
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /v1/events", s.handleIngest)
-	s.mux.HandleFunc("GET /v1/graph", s.withPanelAuth(s.handleGraph))
-	s.mux.HandleFunc("GET /v1/agents", s.withPanelAuth(s.handleAgents))
-	s.mux.HandleFunc("GET /v1/channels", s.withPanelAuth(s.handleListChannels))
-	s.mux.HandleFunc("GET /v1/channels/{channelId}", s.withPanelAuth(s.handleGetChannel))
-	s.mux.HandleFunc("GET /v1/channels/{channelId}/messages", s.withPanelAuth(s.handleListMessages))
-	s.mux.HandleFunc("GET /v1/stream", s.withPanelAuth(s.handleStream))
+	s.mux.HandleFunc("GET /v1/graph", s.handleGraph)
+	s.mux.HandleFunc("GET /v1/agents", s.handleAgents)
+	s.mux.HandleFunc("GET /v1/channels", s.handleListChannels)
+	s.mux.HandleFunc("GET /v1/channels/{channelId}", s.handleGetChannel)
+	s.mux.HandleFunc("GET /v1/channels/{channelId}/messages", s.handleListMessages)
+	s.mux.HandleFunc("GET /v1/stream", s.handleStream)
 }
 
 func (s *Server) ttlLoop() {
@@ -88,26 +89,6 @@ func (s *Server) ttlLoop() {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *Server) withPanelAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.PanelToken != "" {
-			tok := bearerOrQuery(r)
-			if tok != s.cfg.PanelToken {
-				writeErr(w, http.StatusUnauthorized, "unauthorized", "invalid or missing panel token")
-				return
-			}
-		}
-		next(w, r)
-	}
-}
-
-func bearerOrQuery(r *http.Request) string {
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	return r.URL.Query().Get("token")
 }
 
 type envelope struct {
