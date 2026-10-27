@@ -7,13 +7,10 @@ import type {
   Edge,
   Message,
   PanelUiState,
+  WsConnStatus,
   WsEvent,
 } from '../types'
-import {
-  apiChannelIdFromLayout,
-  dmApiChannelId,
-  layoutSlug,
-} from '../layout/agentMap'
+import { apiChannelIdFromLayout } from '../layout/agentMap'
 
 function reduceAgents(agents: Agent[], event: WsEvent): Agent[] {
   if (event.type !== 'agent.status') return agents
@@ -64,9 +61,24 @@ function reduceEdges(edges: Edge[], event: WsEvent): Edge[] {
   }
 }
 
+/** Overlay do shell a partir de WS real + carga do grafo (sem demos). */
+function deriveUiState(
+  wsStatus: WsConnStatus,
+  graphLoaded: boolean,
+  graphFailed: boolean,
+  agentCount: number,
+): PanelUiState {
+  if (graphFailed || wsStatus === 'disconnected') return 'disconnected'
+  if (wsStatus === 'lag') return 'delayed'
+  if (!graphLoaded || wsStatus === 'connecting') return 'loading'
+  if (agentCount === 0) return 'empty'
+  return 'live'
+}
+
 export function usePanel() {
-  const [uiState, setUiState] = useState<PanelUiState>('live')
-  const [sendingDemo, setSendingDemo] = useState(false)
+  const [wsStatus, setWsStatus] = useState<WsConnStatus>('connecting')
+  const [graphLoaded, setGraphLoaded] = useState(false)
+  const [graphFailed, setGraphFailed] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
@@ -85,9 +97,14 @@ export function usePanel() {
         if (cancelled) return
         setAgents(snap.agents)
         setEdges(snap.edges)
+        setGraphFailed(false)
+        setGraphLoaded(true)
       } catch (err) {
         console.error('GET /v1/graph failed', err)
-        if (!cancelled) setUiState('disconnected')
+        if (!cancelled) {
+          setGraphFailed(true)
+          setGraphLoaded(true)
+        }
       }
     })()
     return () => {
@@ -97,22 +114,28 @@ export function usePanel() {
 
   useEffect(() => {
     const client = createWsClient()
-    const disconnect = client.connect((event: WsEvent) => {
-      if (event.type === 'hello' || event.type === 'ping') return
+    const disconnect = client.connect(
+      (event: WsEvent) => {
+        if (event.type === 'hello' || event.type === 'ping') return
 
-      setAgents((prev) => reduceAgents(prev, event))
-      setEdges((prev) => reduceEdges(prev, event))
+        setAgents((prev) => reduceAgents(prev, event))
+        setEdges((prev) => reduceEdges(prev, event))
 
-      if (event.type === 'message') {
-        const msg = event.event
-        const openId = selectedRef.current
-        if (openId && msg.channel_id === openId) {
-          setMessages((prev) =>
-            prev.some((m) => m.event_id === msg.event_id) ? prev : [...prev, msg],
-          )
+        if (event.type === 'message') {
+          const msg = event.event
+          const openId = selectedRef.current
+          if (openId && msg.channel_id === openId) {
+            setMessages((prev) =>
+              prev.some((m) => m.event_id === msg.event_id)
+                ? prev
+                : [...prev, msg],
+            )
+          }
         }
-      }
-    })
+      },
+      (status) => setWsStatus(status),
+    )
+    setWsStatus(client.getStatus())
     return disconnect
   }, [])
 
@@ -163,52 +186,16 @@ export function usePanel() {
     [edges, selectedChannelId],
   )
 
-  // DEV switcher: força sending na aresta designer↔po (layout ou UUID API)
-  useEffect(() => {
-    if (agents.length === 0) return
-    const poId =
-      agents.find((a) => layoutSlug(a.agent_id) === 'po')?.agent_id ?? 'po'
-    const designerId =
-      agents.find((a) => layoutSlug(a.agent_id) === 'designer')?.agent_id ??
-      'designer'
-    const dmId = dmApiChannelId('designer', 'po')
-    setEdges((prev) =>
-      prev.map((e) =>
-        e.channel_id === 'designer:po' || (dmId != null && e.channel_id === dmId)
-          ? {
-              ...e,
-              sending: sendingDemo,
-              sending_from_agent_id: sendingDemo ? poId : null,
-            }
-          : e,
-      ),
-    )
-    setAgents((prev) =>
-      prev.map((a) => {
-        if (a.agent_id === poId || layoutSlug(a.agent_id) === 'po') {
-          return {
-            ...a,
-            status: sendingDemo ? 'busy' : 'idle',
-            status_text: sendingDemo ? 'enviando pra Designer' : 'idle',
-          }
-        }
-        if (a.agent_id === designerId || layoutSlug(a.agent_id) === 'designer') {
-          return {
-            ...a,
-            status: sendingDemo ? 'busy' : 'idle',
-            status_text: sendingDemo ? 'aguardando PO' : 'idle',
-          }
-        }
-        return a
-      }),
-    )
-  }, [sendingDemo, agents])
+  const uiState = deriveUiState(
+    wsStatus,
+    graphLoaded,
+    graphFailed,
+    agents.length,
+  )
 
   return {
     uiState,
-    setUiState,
-    sendingDemo,
-    setSendingDemo,
+    wsStatus,
     agents,
     edges,
     selectedChannelId,

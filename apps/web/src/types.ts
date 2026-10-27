@@ -4,7 +4,10 @@ export type ChannelType = 'dm' | 'group'
 
 export type AgentStatus = 'idle' | 'busy' | 'offline'
 
-/** Overlay / demo states do wireframe v7 (inclui empty/loading além do WS). */
+/**
+ * Shell / overlay state derived from real WS + graph load (não demos).
+ * StatusPill usa WsConnStatus; data-state no App usa este tipo.
+ */
 export type PanelUiState =
   | 'live'
   | 'empty'
@@ -156,6 +159,9 @@ export type ChannelsApi = {
 }
 
 export type WsClient = {
-  connect(onEvent: (event: WsEvent) => void): () => void
+  connect(
+    onEvent: (event: WsEvent) => void,
+    onStatus?: (status: WsConnStatus) => void,
+  ): () => void
   getStatus(): WsConnStatus
 }

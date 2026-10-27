@@ -1,15 +1,14 @@
-import type { PanelUiState } from '../types'
+import type { WsConnStatus } from '../types'
 
-const LABELS: Record<PanelUiState, { cls: string; text: string }> = {
-  live: { cls: '', text: 'WS connected · <2s' },
-  empty: { cls: '', text: 'WS connected · idle' },
-  loading: { cls: 'spin', text: 'WS connected · loading' },
-  delayed: { cls: 'warn', text: 'WS lag · >30s' },
+const LABELS: Record<WsConnStatus, { cls: string; text: string }> = {
+  connected: { cls: '', text: 'WS connected' },
+  connecting: { cls: 'spin', text: 'WS connecting…' },
   disconnected: { cls: 'bad', text: 'WS disconnected' },
+  lag: { cls: 'warn', text: 'WS lag · >30s' },
 }
 
-export function StatusPill({ state }: { state: PanelUiState }) {
-  const { cls, text } = LABELS[state]
+export function StatusPill({ status }: { status: WsConnStatus }) {
+  const { cls, text } = LABELS[status]
   return (
     <div className="status-pill">
       <span className={`dot${cls ? ` ${cls}` : ''}`} />

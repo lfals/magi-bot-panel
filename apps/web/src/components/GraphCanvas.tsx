@@ -34,7 +34,6 @@ type Props = {
   edges: Edge[]
   selectedChannelId: string | null
   selectedAgentId: string | null
-  forceSending: boolean
   onSelectChannel: (channelId: string) => void
   onSelectAgent: (agentId: string, channelId: string) => void
 }
@@ -71,7 +70,6 @@ export function GraphCanvas({
   edges,
   selectedChannelId,
   selectedAgentId,
-  forceSending,
   onSelectChannel,
   onSelectAgent,
 }: Props) {
@@ -86,10 +84,8 @@ export function GraphCanvas({
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
 
   const sendingEdge = edges.find((e) => e.sending)
-  const sendingChannel =
-    sendingEdge?.channel_id ?? (forceSending ? 'designer:po' : null)
-  const sendingFrom =
-    sendingEdge?.sending_from_agent_id ?? (forceSending ? 'po' : null)
+  const sendingChannel = sendingEdge?.channel_id ?? null
+  const sendingFrom = sendingEdge?.sending_from_agent_id ?? null
 
   const onNodePointerDown = useCallback(
     (slug: string, e: ReactPointerEvent) => {

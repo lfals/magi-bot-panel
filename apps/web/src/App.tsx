@@ -1,32 +1,23 @@
-import { useCallback, useState } from 'react'
-import { AuthBanner } from './components/AuthBanner'
 import { DetailDrawer } from './components/DetailDrawer'
 import { GraphCanvas } from './components/GraphCanvas'
 import { TopBar } from './components/TopBar'
 import { usePanel } from './hooks/usePanel'
 
-function PanelShell() {
+export default function App() {
   const p = usePanel()
 
   return (
     <div
       className={`app${p.panelOpen ? '' : ' panel-closed'}`}
       data-state={p.uiState}
-      data-sending={p.sendingDemo ? 'on' : 'off'}
     >
-      <TopBar
-        uiState={p.uiState}
-        sendingDemo={p.sendingDemo}
-        onUiState={p.setUiState}
-        onSendingDemo={p.setSendingDemo}
-      />
+      <TopBar wsStatus={p.wsStatus} />
       <div className="body">
         <GraphCanvas
           agents={p.agents}
           edges={p.edges}
           selectedChannelId={p.selectedChannelId}
           selectedAgentId={p.selectedAgentId}
-          forceSending={p.sendingDemo}
           onSelectChannel={p.selectChannel}
           onSelectAgent={p.selectAgent}
         />
@@ -39,17 +30,5 @@ function PanelShell() {
         />
       </div>
     </div>
-  )
-}
-
-export default function App() {
-  const [session, setSession] = useState(0)
-  const onSaved = useCallback(() => setSession((n) => n + 1), [])
-
-  return (
-    <>
-      <AuthBanner onSaved={onSaved} />
-      <PanelShell key={session} />
-    </>
   )
 }

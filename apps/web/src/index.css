@@ -56,27 +56,6 @@ body {
 .brand { font-weight: 600; letter-spacing: -0.02em; }
 .brand span { color: var(--muted); font-weight: 500; margin-left: 6px; }
 
-.state-switch,
-.demo-switch { display: flex; gap: 4px; flex-wrap: wrap; }
-.state-switch button,
-.demo-switch button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: inherit;
-  cursor: pointer;
-}
-.state-switch button.active,
-.state-switch button:hover,
-.demo-switch button.active,
-.demo-switch button:hover {
-  color: var(--fg);
-  border-color: #3a465c;
-  background: var(--bg-hover);
-}
-
 .status-pill {
   margin-left: auto;
   display: inline-flex;
@@ -273,7 +252,6 @@ svg.graph { width: 100%; height: 100%; display: block; }
 }
 .close:hover { color: var(--fg); }
 .sending-banner {
-  display: none;
   margin: 10px 14px 0;
   padding: 6px 10px;
   border-radius: 8px;
@@ -282,7 +260,6 @@ svg.graph { width: 100%; height: 100%; display: block; }
   color: var(--accent);
   font-size: 12px;
 }
-.app[data-sending="on"] .sending-banner { display: block; }
 .msgs {
   overflow: auto;
   padding: 12px 14px 20px;
@@ -325,66 +302,4 @@ svg.graph { width: 100%; height: 100%; display: block; }
   color: var(--muted);
   padding: 24px 12px;
   text-align: center;
-}
-
-/* Auth banner (L2S-49) — sem token no localStorage */
-.auth-banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
-  background: #2a1f0e;
-  border-bottom: 1px solid #5a4218;
-  color: #f0d9a0;
-  font-size: 12px;
-}
-.auth-banner code {
-  font-family: var(--mono);
-  background: rgba(0,0,0,.25);
-  padding: 1px 5px;
-  border-radius: 4px;
-}
-.auth-banner-form {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
-}
-.auth-banner-form input {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
-  min-width: 180px;
-}
-.auth-banner-form button {
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font: inherit;
-  cursor: pointer;
-}
-.auth-banner-form button:hover {
-  border-color: #3a465c;
-}
-
-/* Drag dos cards no canvas */
-.graph .node { cursor: grab; touch-action: none; }
-.graph .node.dragging { cursor: grabbing; }
-.graph .node.dragging .card { filter: brightness(1.08); }
-
-.graph .port {
-  fill: var(--bg, #0f1419);
-  stroke: #3d4a63;
-  stroke-width: 1.5;
-  pointer-events: none;
-}
-.graph .port-in { stroke: color-mix(in srgb, var(--dm) 70%, #3d4a63); }
-.graph .port-out { stroke: color-mix(in srgb, var(--accent) 70%, #3d4a63); }
-.graph .edge {
-  fill: none;
 }
