@@ -1,8 +1,8 @@
-/** ADR-002 rev.4 — tipos canônicos alinhados a docs/openapi.yaml (L2S-43). */
+/** ADR-002 rev.5 — tipos canônicos (feed global + waiting/pending). */
 
 export type ChannelType = 'dm' | 'group'
 
-export type AgentStatus = 'idle' | 'busy' | 'offline'
+export type AgentStatus = 'idle' | 'busy' | 'waiting' | 'offline'
 
 /**
  * Shell / overlay state derived from real WS + graph load (não demos).
@@ -19,8 +19,10 @@ export type Agent = {
   agent_id: string
   name: string
   status: AgentStatus
-  /** Texto no retângulo do nó (MVP espelha status / atividade). */
+  /** Texto no retângulo do nó — só da API, sem inventar. */
   status_text: string
+  waiting_for_agent_id?: string | null
+  waiting_for_name?: string | null
   /** OpenAPI: nullable date-time. */
   last_seen_at: string | null
   /** Só UI — role uppercase no card (não vem da API). */
@@ -37,6 +39,9 @@ export type Edge = {
   last_preview?: string
   sending: boolean
   sending_from_agent_id?: string | null
+  pending: boolean
+  pending_from_agent_id?: string | null
+  pending_to_agent_id?: string | null
 }
 
 export type GraphSnapshot = {
@@ -66,7 +71,7 @@ export type ChannelList = {
   next_cursor?: string | null
 }
 
-/** MessageEvent no OpenAPI. */
+/** MessageEvent no OpenAPI / ADR-002. */
 export type Message = {
   event_id: string
   ts: string
@@ -83,10 +88,16 @@ export type Message = {
   dedupe_key: string
 }
 
+/** Timeline por canal (GET /v1/channels/:id/messages). */
 export type MessageList = {
   channel_id: string
   items: Message[]
-  /** OpenAPI: date-time cursor pra paginação (não next_cursor). */
+  next_before?: string | null
+}
+
+/** Feed global (GET /v1/messages) — ADR-002 rev.5. */
+export type GlobalMessageList = {
+  items: Message[]
   next_before?: string | null
 }
 
@@ -96,9 +107,14 @@ export type ListMessagesOpts = {
   limit?: number
 }
 
-/* —— WS /v1/stream (ADR-002 rev.4; NÃO usar message.created) ——
+export type ListGlobalMessagesOpts = {
+  limit?: number
+  before?: string
+  channel_id?: string
+}
+
+/* —— WS /v1/stream (ADR-002 rev.5; NÃO usar message.created) ——
  * Backend Go: message frame = { type: 'message', event: MessageEvent }
- * (não flat nem nested sob `message`).
  */
 
 export type WsHello = { type: 'hello'; ts?: string }
@@ -117,6 +133,15 @@ export type WsEdgeSending = {
   dedupe_key?: string
 }
 
+export type WsEdgePending = {
+  type: 'edge.pending'
+  ts?: string
+  channel_id: string
+  from_agent_id: string
+  to_agent_id: string
+  dedupe_key?: string
+}
+
 export type WsEdgeIdle = {
   type: 'edge.idle'
   ts?: string
@@ -129,6 +154,9 @@ export type WsAgentStatus = {
   agent_id: string
   status: AgentStatus
   status_text: string
+  waiting_for_agent_id?: string | null
+  waiting_for_name?: string | null
+  channel_id?: string | null
   dedupe_key?: string
 }
 
@@ -137,10 +165,32 @@ export type WsEvent =
   | WsPing
   | WsMessage
   | WsEdgeSending
+  | WsEdgePending
   | WsEdgeIdle
   | WsAgentStatus
 
 export type WsConnStatus = 'connected' | 'connecting' | 'disconnected' | 'lag'
+
+/** Row de estado no feed — só FE, derivado de agent.status / edge.pending. */
+export type FeedStateKind = 'waiting' | 'busy' | 'resolved' | 'stale'
+
+export type FeedStateRow = {
+  kind: 'state'
+  id: string
+  state: FeedStateKind
+  channel_id: string | null
+  from_name: string
+  to_name: string | null
+  body: string
+  ts: string
+}
+
+export type FeedMsgRow = {
+  kind: 'msg'
+  message: Message
+}
+
+export type FeedRow = FeedMsgRow | FeedStateRow
 
 export type GraphApi = {
   getGraph(): Promise<GraphSnapshot>
@@ -156,6 +206,10 @@ export type ChannelsApi = {
     channelId: string,
     opts?: ListMessagesOpts,
   ): Promise<MessageList>
+}
+
+export type MessagesApi = {
+  listGlobalMessages(opts?: ListGlobalMessagesOpts): Promise<GlobalMessageList>
 }
 
 export type WsClient = {

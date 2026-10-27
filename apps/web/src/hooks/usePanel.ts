@@ -1,16 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { channelsApi } from '../api/channels'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { graphApi } from '../api/graph'
+import { messagesApi } from '../api/messages'
 import { createWsClient } from '../api/ws'
 import type {
   Agent,
   Edge,
+  FeedRow,
+  FeedStateRow,
   Message,
   PanelUiState,
   WsConnStatus,
   WsEvent,
 } from '../types'
-import { apiChannelIdFromLayout } from '../layout/agentMap'
+import {
+  apiChannelIdFromLayout,
+  displayNameForAgent,
+  layoutSlug,
+} from '../layout/agentMap'
 
 function reduceAgents(agents: Agent[], event: WsEvent): Agent[] {
   if (event.type !== 'agent.status') return agents
@@ -20,10 +26,29 @@ function reduceAgents(agents: Agent[], event: WsEvent): Agent[] {
           ...a,
           status: event.status,
           status_text: event.status_text,
+          waiting_for_agent_id: event.waiting_for_agent_id ?? null,
+          waiting_for_name: event.waiting_for_name ?? null,
           last_seen_at: event.ts ?? a.last_seen_at,
         }
       : a,
   )
+}
+
+function clearPendingFields(e: Edge): Edge {
+  return {
+    ...e,
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
+  }
+}
+
+function clearSendingFields(e: Edge): Edge {
+  return {
+    ...e,
+    sending: false,
+    sending_from_agent_id: null,
+  }
 }
 
 function reduceEdges(edges: Edge[], event: WsEvent): Edge[] {
@@ -38,24 +63,45 @@ function reduceEdges(edges: Edge[], event: WsEvent): Edge[] {
             }
           : e,
       )
-    case 'edge.idle':
+    case 'edge.pending':
       return edges.map((e) =>
         e.channel_id === event.channel_id
-          ? { ...e, sending: false, sending_from_agent_id: null }
-          : e,
-      )
-    case 'message':
-      return edges.map((e) =>
-        e.channel_id === event.event.channel_id
           ? {
               ...e,
-              sending: false,
-              sending_from_agent_id: null,
-              last_message_at: event.event.ts,
-              last_preview: event.event.body.slice(0, 80),
+              pending: true,
+              pending_from_agent_id: event.from_agent_id,
+              pending_to_agent_id: event.to_agent_id,
             }
           : e,
       )
+    case 'edge.idle':
+      return edges.map((e) =>
+        e.channel_id === event.channel_id
+          ? clearPendingFields(clearSendingFields(e))
+          : e,
+      )
+    case 'message': {
+      const msg = event.event
+      return edges.map((e) => {
+        if (e.channel_id !== msg.channel_id) return e
+        let next = clearSendingFields({
+          ...e,
+          last_message_at: msg.ts,
+          last_preview: msg.body.slice(0, 80),
+        })
+        // ADR: se from == pending_to no canal, limpa pending
+        if (
+          next.pending &&
+          next.pending_to_agent_id &&
+          (msg.from_agent_id === next.pending_to_agent_id ||
+            layoutSlug(msg.from_agent_id) ===
+              layoutSlug(next.pending_to_agent_id ?? ''))
+        ) {
+          next = clearPendingFields(next)
+        }
+        return next
+      })
+    }
     default:
       return edges
   }
@@ -75,20 +121,91 @@ function deriveUiState(
   return 'live'
 }
 
+function sameAgent(a: string, b: string): boolean {
+  if (a === b) return true
+  const sa = layoutSlug(a)
+  const sb = layoutSlug(b)
+  return Boolean(sa && sb && sa === sb)
+}
+
+function agentInParticipants(agentId: string, participantIds: string[]): boolean {
+  return participantIds.some((p) => sameAgent(p, agentId))
+}
+
+/** Rows de estado FE-only a partir de waiting/busy/pending ativos. */
+function deriveStateRows(agents: Agent[], edges: Edge[]): FeedStateRow[] {
+  const rows: FeedStateRow[] = []
+  const now = new Date().toISOString()
+
+  for (const a of agents) {
+    if (a.status === 'waiting') {
+      const waitName =
+        a.waiting_for_name?.trim() ||
+        (a.waiting_for_agent_id
+          ? displayNameForAgent(a.waiting_for_agent_id)
+          : null)
+      const edge =
+        edges.find(
+          (e) =>
+            e.pending &&
+            e.pending_from_agent_id &&
+            sameAgent(e.pending_from_agent_id, a.agent_id),
+        ) ??
+        edges.find((e) => agentInParticipants(a.agent_id, e.participant_ids))
+      rows.push({
+        kind: 'state',
+        id: `state-wait-${a.agent_id}`,
+        state: 'waiting',
+        channel_id: edge?.channel_id ?? null,
+        from_name: displayNameForAgent(a.agent_id, a.name),
+        to_name: waitName,
+        body: waitName
+          ? `Aguardando resposta de ${waitName} (handoff aberto).`
+          : a.status_text || 'Aguardando…',
+        ts: a.last_seen_at ?? now,
+      })
+    } else if (a.status === 'busy') {
+      const edge =
+        edges.find(
+          (e) =>
+            e.pending &&
+            e.pending_to_agent_id &&
+            sameAgent(e.pending_to_agent_id, a.agent_id),
+        ) ?? null
+      rows.push({
+        kind: 'state',
+        id: `state-busy-${a.agent_id}`,
+        state: 'busy',
+        channel_id: edge?.channel_id ?? null,
+        from_name: displayNameForAgent(a.agent_id, a.name),
+        to_name: null,
+        body: a.status_text || 'Trabalhando…',
+        ts: a.last_seen_at ?? now,
+      })
+    }
+  }
+
+  // Pending edges sem agent waiting/busy correspondente ainda aparecem? Skip —
+  // waiting/busy agents cover the wireframe. Pending is shown on the graph.
+
+  return rows
+}
+
 export function usePanel() {
   const [wsStatus, setWsStatus] = useState<WsConnStatus>('connecting')
   const [graphLoaded, setGraphLoaded] = useState(false)
   const [graphFailed, setGraphFailed] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
-  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
+  const [highlightChannelIds, setHighlightChannelIds] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const [panelOpen, setPanelOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
-  const [msgsLoading, setMsgsLoading] = useState(false)
-  const selectedRef = useRef<string | null>(null)
-  selectedRef.current = selectedChannelId
+  const [feedLoading, setFeedLoading] = useState(true)
+  const [freshEventId, setFreshEventId] = useState<string | null>(null)
 
+  // Seed grafo
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -112,6 +229,28 @@ export function usePanel() {
     }
   }, [])
 
+  // Seed feed global (tolera 404)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setFeedLoading(true)
+      try {
+        const list = await messagesApi.listGlobalMessages({ limit: 50 })
+        if (cancelled) return
+        setMessages(list.items)
+      } catch (err) {
+        console.error('GET /v1/messages failed', err)
+        if (!cancelled) setMessages([])
+      } finally {
+        if (!cancelled) setFeedLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // WS
   useEffect(() => {
     const client = createWsClient()
     const disconnect = client.connect(
@@ -123,14 +262,11 @@ export function usePanel() {
 
         if (event.type === 'message') {
           const msg = event.event
-          const openId = selectedRef.current
-          if (openId && msg.channel_id === openId) {
-            setMessages((prev) =>
-              prev.some((m) => m.event_id === msg.event_id)
-                ? prev
-                : [...prev, msg],
-            )
-          }
+          setMessages((prev) => {
+            if (prev.some((m) => m.event_id === msg.event_id)) return prev
+            return [msg, ...prev]
+          })
+          setFreshEventId(msg.event_id)
         }
       },
       (status) => setWsStatus(status),
@@ -139,52 +275,43 @@ export function usePanel() {
     return disconnect
   }, [])
 
-  const loadMessages = useCallback(async (channelId: string) => {
-    setMsgsLoading(true)
-    try {
-      const apiId = apiChannelIdFromLayout(channelId)
-      const list = await channelsApi.listMessages(apiId)
-      setMessages(list.items)
-    } catch (err) {
-      console.error(err)
-      setMessages([])
-    } finally {
-      setMsgsLoading(false)
-    }
+  const selectChannel = useCallback((channelId: string) => {
+    const apiId = apiChannelIdFromLayout(channelId)
+    setSelectedAgentId(null)
+    setHighlightChannelIds(new Set([apiId]))
   }, [])
 
-  const selectChannel = useCallback(
-    (channelId: string) => {
-      const apiId = apiChannelIdFromLayout(channelId)
-      setSelectedChannelId(apiId)
-      setSelectedAgentId(null)
-      setPanelOpen(true)
-      void loadMessages(apiId)
-    },
-    [loadMessages],
-  )
-
   const selectAgent = useCallback(
-    (agentId: string, channelId: string) => {
-      const apiId = apiChannelIdFromLayout(channelId)
+    (agentId: string, _channelId: string) => {
       setSelectedAgentId(agentId)
-      setSelectedChannelId(apiId)
-      setPanelOpen(true)
-      void loadMessages(apiId)
+      // Highlight all edges where participant_ids contains agent
+      const ids = edges
+        .filter((e) => agentInParticipants(agentId, e.participant_ids))
+        .map((e) => e.channel_id)
+      setHighlightChannelIds(new Set(ids.length ? ids : []))
     },
-    [loadMessages],
+    [edges],
   )
 
-  const closePanel = useCallback(() => {
-    setPanelOpen(false)
-    setSelectedChannelId(null)
+  const selectFeedChannel = useCallback((channelId: string) => {
+    setSelectedAgentId(null)
+    setHighlightChannelIds(new Set([channelId]))
+  }, [])
+
+  const clearHighlight = useCallback(() => {
+    setHighlightChannelIds(new Set())
     setSelectedAgentId(null)
   }, [])
 
-  const selectedEdge = useMemo(
-    () => edges.find((e) => e.channel_id === selectedChannelId) ?? null,
-    [edges, selectedChannelId],
+  const stateRows = useMemo(
+    () => deriveStateRows(agents, edges),
+    [agents, edges],
   )
+
+  const feedRows: FeedRow[] = useMemo(() => {
+    const msgs: FeedRow[] = messages.map((m) => ({ kind: 'msg' as const, message: m }))
+    return [...stateRows, ...msgs]
+  }, [stateRows, messages])
 
   const uiState = deriveUiState(
     wsStatus,
@@ -198,14 +325,14 @@ export function usePanel() {
     wsStatus,
     agents,
     edges,
-    selectedChannelId,
+    highlightChannelIds,
     selectedAgentId,
-    selectedEdge,
-    panelOpen,
-    messages,
-    msgsLoading,
+    feedRows,
+    feedLoading,
+    freshEventId,
     selectChannel,
     selectAgent,
-    closePanel,
+    selectFeedChannel,
+    clearHighlight,
   }
 }

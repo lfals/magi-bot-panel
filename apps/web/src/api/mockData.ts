@@ -71,6 +71,9 @@ export const MOCK_EDGES: Edge[] = [
     last_preview: 'v7: drawer à direita + arestas…',
     sending: true,
     sending_from_agent_id: 'po',
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
   },
   {
     channel_id: 'designer:frontend',
@@ -80,6 +83,9 @@ export const MOCK_EDGES: Edge[] = [
     last_preview: 'Scaffold parado até OK do Luis.',
     sending: false,
     sending_from_agent_id: null,
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
   },
   {
     channel_id: 'arquiteto:backend',
@@ -89,6 +95,9 @@ export const MOCK_EDGES: Edge[] = [
     last_preview: 'Tailscale-only.',
     sending: false,
     sending_from_agent_id: null,
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
   },
   {
     channel_id: 'nuvi:po',
@@ -98,6 +107,9 @@ export const MOCK_EDGES: Edge[] = [
     last_preview: 'Design só via PO até OK do Luis.',
     sending: false,
     sending_from_agent_id: null,
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
   },
   {
     channel_id: 'group-l2s',
@@ -116,6 +128,9 @@ export const MOCK_EDGES: Edge[] = [
     last_preview: 'v7: endpoints nas bordas; drawer direita.',
     sending: false,
     sending_from_agent_id: null,
+    pending: false,
+    pending_from_agent_id: null,
+    pending_to_agent_id: null,
   },
 ]
 

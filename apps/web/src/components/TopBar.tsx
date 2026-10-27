@@ -9,7 +9,7 @@ export function TopBar({ wsStatus }: Props) {
   return (
     <header className="top">
       <div className="brand">
-        magi-bot-panel <span>nodes v7 · Tailscale</span>
+        magi-bot-panel <span>nodes v8 · Tailscale</span>
       </div>
       <StatusPill status={wsStatus} />
     </header>

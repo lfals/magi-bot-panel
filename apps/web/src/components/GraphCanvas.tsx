@@ -32,7 +32,7 @@ import { useNodePositions } from '../hooks/useNodePositions'
 type Props = {
   agents: Agent[]
   edges: Edge[]
-  selectedChannelId: string | null
+  highlightChannelIds: Set<string>
   selectedAgentId: string | null
   onSelectChannel: (channelId: string) => void
   onSelectAgent: (agentId: string, channelId: string) => void
@@ -60,7 +60,6 @@ type GroupDrawable = {
 
 type EdgeDrawable = DmDrawable | GroupDrawable
 
-/** participant_ids (UUID ou slug mock) → slugs com posição no canvas. */
 function resolveMemberSlugs(
   participantIds: string[],
   positions: Record<string, NodePos>,
@@ -85,7 +84,6 @@ function isGroupEdge(edge: Edge): boolean {
   )
 }
 
-/** Deriva geometria de arestas a partir de GET /v1/graph edges[] (não DM_EDGE_PAIRS). */
 function buildEdgeDrawables(
   edges: Edge[],
   positions: Record<string, NodePos>,
@@ -107,7 +105,6 @@ function buildEdgeDrawables(
       continue
     }
 
-    // DM: 2 participantes que resolvem a slugs no canvas
     const members = resolveMemberSlugs(edge.participant_ids, positions)
     if (members.length < 2) continue
     const slugA = members[0]!
@@ -146,10 +143,25 @@ function clientToSvg(
   return { x: p.x, y: p.y }
 }
 
+function edgeClassName(
+  base: string[],
+  edge: Edge,
+  isSelected: boolean,
+): string {
+  return [
+    ...base,
+    isSelected ? 'selected' : '',
+    edge.sending ? 'sending' : '',
+    !edge.sending && edge.pending ? 'pending' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 export function GraphCanvas({
   agents,
   edges,
-  selectedChannelId,
+  highlightChannelIds,
   selectedAgentId,
   onSelectChannel,
   onSelectAgent,
@@ -163,10 +175,6 @@ export function GraphCanvas({
     moved: boolean
   } | null>(null)
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
-
-  const sendingEdge = edges.find((e) => e.sending)
-  const sendingChannel = sendingEdge?.channel_id ?? null
-  const sendingFrom = sendingEdge?.sending_from_agent_id ?? null
 
   const drawables = useMemo(
     () => buildEdgeDrawables(edges, positions),
@@ -239,7 +247,7 @@ export function GraphCanvas({
         Atraso no grafo — última atividade &gt;30s. Reconectando WS…
       </div>
       <div className="banner disconnected">
-        Desconectado do WebSocket. Status dos nós pode estar desatualizado.
+        Desconectado do WebSocket. Status dos nós / feed pode estar desatualizado.
       </div>
       <div className="empty-canvas">
         <div>
@@ -265,16 +273,12 @@ export function GraphCanvas({
         <g id="edges">
           {drawables.map((item) => {
             if (item.kind === 'dm') {
-              const isSending = sendingChannel === item.channelId
-              const isSelected = selectedChannelId === item.channelId
-              const cls = [
-                'edge',
-                item.edge.channel_type || 'dm',
-                isSelected ? 'selected' : '',
-                isSending ? 'sending' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')
+              const isSelected = highlightChannelIds.has(item.channelId)
+              const cls = edgeClassName(
+                ['edge', item.edge.channel_type || 'dm'],
+                item.edge,
+                isSelected,
+              )
               return (
                 <g key={item.channelId}>
                   <path
@@ -297,17 +301,8 @@ export function GraphCanvas({
               )
             }
 
-            // group — um path por segmento; select/sending usam channel_id da API
-            const isSending = sendingChannel === item.channelId
-            const isSelected = selectedChannelId === item.channelId
-            const cls = [
-              'edge',
-              'group',
-              isSelected ? 'selected' : '',
-              isSending ? 'sending' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')
+            const isSelected = highlightChannelIds.has(item.channelId)
+            const cls = edgeClassName(['edge', 'group'], item.edge, isSelected)
             return (
               <g key={item.channelId}>
                 {item.segs.map((seg) => (
@@ -338,12 +333,19 @@ export function GraphCanvas({
         <g pointerEvents="none">
           {drawables.map((item) => {
             if (item.kind === 'dm') {
-              const isSending = sendingChannel === item.channelId
-              const text = isSending ? 'DM · enviando…' : item.label
+              const isSending = item.edge.sending
+              const isPending = !isSending && item.edge.pending
+              let text = item.label
+              if (isSending) text = 'DM · enviando…'
+              else if (isPending) text = 'DM · aguardando…'
               return (
                 <text
                   key={`lbl-${item.channelId}`}
-                  className={['edge-label', isSending ? 'sending' : '']
+                  className={[
+                    'edge-label',
+                    isSending ? 'sending' : '',
+                    isPending ? 'pending' : '',
+                  ]
                     .filter(Boolean)
                     .join(' ')}
                   x={item.labelX}
@@ -373,14 +375,27 @@ export function GraphCanvas({
           if (!slug) return null
           const pos = positions[slug]
           if (!pos) return null
-          const isSending =
-            sendingFrom === agent.agent_id || sendingFrom === slug
-          const isSelected = selectedAgentId === agent.agent_id
+          const inHighlightedEdge = edges.some(
+            (e) =>
+              highlightChannelIds.has(e.channel_id) &&
+              e.participant_ids.some(
+                (pid) =>
+                  pid === agent.agent_id || layoutSlug(pid) === slug,
+              ),
+          )
+          const isSelected =
+            selectedAgentId === agent.agent_id || inHighlightedEdge
           const role = displayRoleForAgent(agent.agent_id, agent.role)
           const name = displayNameForAgent(agent.agent_id, agent.name)
           const isDragging = draggingSlug === slug
           const inn = inputPort({ x: 0, y: 0 })
           const out = outputPort({ x: 0, y: 0 })
+          const statusClass =
+            agent.status === 'busy'
+              ? 'busy'
+              : agent.status === 'waiting'
+                ? 'waiting'
+                : ''
 
           return (
             <g
@@ -388,7 +403,7 @@ export function GraphCanvas({
               className={[
                 'node',
                 isSelected ? 'selected' : '',
-                isSending ? 'sending' : '',
+                statusClass,
                 isDragging ? 'dragging' : '',
               ]
                 .filter(Boolean)
@@ -403,7 +418,6 @@ export function GraphCanvas({
               }}
             >
               <rect className="card" width={NODE_W} height={NODE_H} rx={8} ry={8} />
-              {/* ports: input esquerda / output direita */}
               <circle className="port port-in" cx={inn.x} cy={inn.y} r={4} />
               <circle className="port port-out" cx={out.x} cy={out.y} r={4} />
               <circle className="pulse-dot" cx={NODE_W - 10} cy={10} r={4} />
