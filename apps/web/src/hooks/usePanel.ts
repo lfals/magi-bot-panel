@@ -9,7 +9,7 @@ import type {
   PanelUiState,
   WsEvent,
 } from '../types'
-import { apiChannelIdFromLayout } from '../layout/agentMap'
+import { dmApiChannelId, layoutSlug } from '../layout/agentMap'
 
 function reduceAgents(agents: Agent[], event: WsEvent): Agent[] {
   if (event.type !== 'agent.status') return agents
@@ -115,8 +115,7 @@ export function usePanel() {
   const loadMessages = useCallback(async (channelId: string) => {
     setMsgsLoading(true)
     try {
-      const apiId = apiChannelIdFromLayout(channelId)
-      const list = await channelsApi.listMessages(apiId)
+      const list = await channelsApi.listMessages(channelId)
       setMessages(list.items)
     } catch (err) {
       console.error(err)
@@ -128,22 +127,20 @@ export function usePanel() {
 
   const selectChannel = useCallback(
     (channelId: string) => {
-      const apiId = apiChannelIdFromLayout(channelId)
-      setSelectedChannelId(apiId)
+      setSelectedChannelId(channelId)
       setSelectedAgentId(null)
       setPanelOpen(true)
-      void loadMessages(apiId)
+      void loadMessages(channelId)
     },
     [loadMessages],
   )
 
   const selectAgent = useCallback(
     (agentId: string, channelId: string) => {
-      const apiId = apiChannelIdFromLayout(channelId)
       setSelectedAgentId(agentId)
-      setSelectedChannelId(apiId)
+      setSelectedChannelId(channelId)
       setPanelOpen(true)
-      void loadMessages(apiId)
+      void loadMessages(channelId)
     },
     [loadMessages],
   )
@@ -159,30 +156,36 @@ export function usePanel() {
     [edges, selectedChannelId],
   )
 
-  // DEV switcher: força sending na aresta designer:po (como wireframe v7)
+  // DEV switcher: força sending na aresta designer↔po (layout ou UUID API)
   useEffect(() => {
     if (agents.length === 0) return
+    const poId =
+      agents.find((a) => layoutSlug(a.agent_id) === 'po')?.agent_id ?? 'po'
+    const designerId =
+      agents.find((a) => layoutSlug(a.agent_id) === 'designer')?.agent_id ??
+      'designer'
+    const dmId = dmApiChannelId('designer', 'po')
     setEdges((prev) =>
       prev.map((e) =>
-        e.channel_id === 'designer:po'
+        e.channel_id === 'designer:po' || (dmId != null && e.channel_id === dmId)
           ? {
               ...e,
               sending: sendingDemo,
-              sending_from_agent_id: sendingDemo ? 'po' : null,
+              sending_from_agent_id: sendingDemo ? poId : null,
             }
           : e,
       ),
     )
     setAgents((prev) =>
       prev.map((a) => {
-        if (a.agent_id === 'po') {
+        if (a.agent_id === poId || layoutSlug(a.agent_id) === 'po') {
           return {
             ...a,
             status: sendingDemo ? 'busy' : 'idle',
             status_text: sendingDemo ? 'enviando pra Designer' : 'idle',
           }
         }
-        if (a.agent_id === 'designer') {
+        if (a.agent_id === designerId || layoutSlug(a.agent_id) === 'designer') {
           return {
             ...a,
             status: sendingDemo ? 'busy' : 'idle',
@@ -192,7 +195,7 @@ export function usePanel() {
         return a
       }),
     )
-  }, [sendingDemo, agents.length])
+  }, [sendingDemo, agents])
 
   return {
     uiState,

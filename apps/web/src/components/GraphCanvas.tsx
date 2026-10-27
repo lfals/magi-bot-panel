@@ -18,6 +18,7 @@ import {
   dmApiChannelId,
   isGroupChannelId,
   layoutSlug,
+  resolveApiChannelId,
 } from '../layout/agentMap'
 import {
   DM_EDGE_PAIRS,
@@ -142,10 +143,12 @@ export function GraphCanvas({
       }
       if (!moved) {
         const primary = NODE_PRIMARY_CHANNEL[slug]
-        if (primary) onSelectAgent(agentId, primary)
+        if (primary) {
+          onSelectAgent(agentId, resolveApiChannelId(primary, edges))
+        }
       }
     },
-    [onSelectAgent],
+    [onSelectAgent, edges],
   )
 
   const groupSegs = groupCurveSegs(positions)
@@ -209,7 +212,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(pair.channel_id)
+                    onSelectChannel(edge?.channel_id ?? apiId ?? pair.channel_id)
                   }}
                 />
                 <path
@@ -217,7 +220,7 @@ export function GraphCanvas({
                   d={d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel(pair.channel_id)
+                    onSelectChannel(edge?.channel_id ?? apiId ?? pair.channel_id)
                   }}
                 />
               </g>
@@ -247,7 +250,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel('group-l2s')
+                    onSelectChannel(resolveApiChannelId('group-l2s', edges))
                   }}
                 />
                 <path
@@ -255,7 +258,7 @@ export function GraphCanvas({
                   d={seg.d}
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    onSelectChannel('group-l2s')
+                    onSelectChannel(resolveApiChannelId('group-l2s', edges))
                   }}
                 />
               </g>
