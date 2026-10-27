@@ -4,8 +4,8 @@
 FROM node:22-alpine AS build
 WORKDIR /src
 
-ARG VITE_API_BASE_URL=http://magi.tailcfeeb7.ts.net:8787
-ARG VITE_WS_URL=ws://magi.tailcfeeb7.ts.net:8787/v1/stream
+ARG VITE_API_BASE_URL=
+ARG VITE_WS_URL=
 ARG VITE_USE_MOCKS=0
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_WS_URL=$VITE_WS_URL \
