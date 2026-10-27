@@ -23,7 +23,7 @@ services:
     volumes:
       - panel-data:/data
     ports:
-      - "${MAGI_BIND_IP:127.0.0.1}:${API_PORT:-8787}:8787"
+      - "${MAGI_BIND_IP:-127.0.0.1}:${API_PORT:-8787}:8787"
     networks:
       - panel
     healthcheck:
@@ -44,7 +44,7 @@ services:
     container_name: magi-bot-panel-web
     restart: unless-stopped
     ports:
-      - "${MAGI_BIND_IP:127.0.0.1}:${WEB_PORT:-8080}:80"
+      - "${MAGI_BIND_IP:-127.0.0.1}:${WEB_PORT:-8080}:80"
     depends_on:
       api:
         condition: service_healthy

@@ -1,3 +1,4 @@
+import { authHeaders } from '../auth/token'
 import { API_BASE_URL, USE_MOCKS } from '../config'
 import type {
   Channel,
@@ -9,6 +10,22 @@ import type {
 import { CHANNEL_TITLES, MOCK_CHANNELS, MOCK_MESSAGES } from './mockData'
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function authFetch(input: string, init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+  })
+}
+
+function authError(path: string, status: number): Error {
+  if (status === 401) {
+    return new Error(
+      `${path} → 401 (token ausente ou inválido — abra com ?token=… ou cole no banner)`,
+    )
+  }
+  return new Error(`${path} → ${status}`)
+}
 
 export const channelsApi: ChannelsApi = {
   async listChannels(opts?: {
@@ -26,10 +43,10 @@ export const channelsApi: ChannelsApi = {
     if (opts?.limit) q.set('limit', String(opts.limit))
     if (opts?.cursor) q.set('cursor', opts.cursor)
     const qs = q.toString()
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE_URL}/v1/channels${qs ? `?${qs}` : ''}`,
     )
-    if (!res.ok) throw new Error(`GET /v1/channels → ${res.status}`)
+    if (!res.ok) throw authError('GET /v1/channels', res.status)
     return (await res.json()) as ChannelList
   },
 
@@ -43,10 +60,10 @@ export const channelsApi: ChannelsApi = {
         label: ch.label ?? CHANNEL_TITLES[channelId] ?? channelId,
       }
     }
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE_URL}/v1/channels/${encodeURIComponent(channelId)}`,
     )
-    if (!res.ok) throw new Error(`GET /v1/channels/:id → ${res.status}`)
+    if (!res.ok) throw authError('GET /v1/channels/:id', res.status)
     return (await res.json()) as Channel
   },
 
@@ -78,10 +95,10 @@ export const channelsApi: ChannelsApi = {
     if (opts?.before) q.set('before', opts.before)
     if (opts?.limit) q.set('limit', String(opts.limit))
     const qs = q.toString()
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE_URL}/v1/channels/${encodeURIComponent(channelId)}/messages${qs ? `?${qs}` : ''}`,
     )
-    if (!res.ok) throw new Error(`GET …/messages → ${res.status}`)
+    if (!res.ok) throw authError('GET …/messages', res.status)
     return (await res.json()) as MessageList
   },
 }

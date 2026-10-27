@@ -1,0 +1,18 @@
+# Sidecar Tailscale no box → Magi (userspace). Só sobe com TS_AUTHKEY no .env.
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: grok-box-tailscale
+    hostname: grok-box-l2s
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_HOSTNAME: ${TS_HOSTNAME:-grok-box-l2s}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:grok-box}
+      TS_USERSPACE: ${TS_USERSPACE:-true}
+      TS_STATE_DIR: /var/lib/tailscale
+    volumes:
+      - ts-state:/var/lib/tailscale
+    network_mode: host
+volumes:
+  ts-state:

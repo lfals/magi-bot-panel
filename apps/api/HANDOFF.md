@@ -52,3 +52,9 @@ git commit -m "feat(api): ADR-002 rev.4 graph + typed ingest + go.sum"
 ## Fora deste draft
 
 - Sem push/PR bot · Sem Cloudflare Tunnel · Frontend React intocado
+
+## L2S-43 — volume `/data` ownership
+
+- `docker-entrypoint.sh`: se root, `chown -R app:app $(dirname $DATABASE_PATH)` e `su-exec app:app` no server; se não-root, só `exec`.
+- Dockerfile: `su-exec` instalado, `USER app` removido (drop feito no entrypoint), `ENTRYPOINT` + `CMD` mantidos; EXPOSE/HEALTHCHECK iguais.
+- `chown 10001` manual na Magi vira desnecessário após rebuild.

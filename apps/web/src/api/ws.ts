@@ -1,3 +1,4 @@
+import { wsUrlWithToken } from '../auth/token'
 import { USE_MOCKS, WS_URL } from '../config'
 import type { WsClient, WsConnStatus, WsEvent } from '../types'
 
@@ -111,7 +112,8 @@ export function createWsClient(): WsClient {
 
       const open = () => {
         status = 'connecting'
-        ws = new WebSocket(WS_URL)
+        // Browser WebSocket não aceita Authorization — ?token= é o fallback documentado (L2S-49).
+        ws = new WebSocket(wsUrlWithToken(WS_URL))
         ws.onopen = () => {
           status = 'connected'
         }

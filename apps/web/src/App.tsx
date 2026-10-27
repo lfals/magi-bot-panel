@@ -1,9 +1,11 @@
+import { useCallback, useState } from 'react'
+import { AuthBanner } from './components/AuthBanner'
 import { DetailDrawer } from './components/DetailDrawer'
 import { GraphCanvas } from './components/GraphCanvas'
 import { TopBar } from './components/TopBar'
 import { usePanel } from './hooks/usePanel'
 
-export default function App() {
+function PanelShell() {
   const p = usePanel()
 
   return (
@@ -37,5 +39,17 @@ export default function App() {
         />
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  const [session, setSession] = useState(0)
+  const onSaved = useCallback(() => setSession((n) => n + 1), [])
+
+  return (
+    <>
+      <AuthBanner onSaved={onSaved} />
+      <PanelShell key={session} />
+    </>
   )
 }
