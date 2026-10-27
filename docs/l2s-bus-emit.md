@@ -114,3 +114,8 @@ Falha de emit **não** deve bloquear o trabalho do bot (best-effort).
 ## Allowlist
 
 Só agents em `L2S_BUS_ALLOWLIST` (CSV de UUIDs) na Magi.
+
+## Helpers
+
+- Magi: `/home/felps/magi-bot-panel/scripts/l2s-bus-emit.sh` (lê `.env` local)
+- Mac: `scripts/emit-via-magi.sh` → SSH no helper Magi (sem HMAC no laptop)
