@@ -1,0 +1,321 @@
+:root {
+  --bg: #0e1116;
+  --bg-elev: #151a22;
+  --bg-hover: #1c2330;
+  --border: #263041;
+  --fg: #e8eaed;
+  --muted: #8b95a5;
+  --accent: #5eb8ff;
+  --ok: #3dd68c;
+  --warn: #f0b429;
+  --bad: #f07178;
+  --dm: #a78bfa;
+  --group: #5eb8ff;
+  --priority: #ff8b6a;
+  --edge: #3a465c;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --detail-w: 360px;
+  --top-h: 44px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: var(--top-h) 1fr;
+  height: 100%;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  z-index: 2;
+}
+.brand { font-weight: 600; letter-spacing: -0.02em; }
+.brand span { color: var(--muted); font-weight: 500; margin-left: 6px; }
+
+.state-switch,
+.demo-switch { display: flex; gap: 4px; flex-wrap: wrap; }
+.state-switch button,
+.demo-switch button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.state-switch button.active,
+.state-switch button:hover,
+.demo-switch button.active,
+.demo-switch button:hover {
+  color: var(--fg);
+  border-color: #3a465c;
+  background: var(--bg-hover);
+}
+
+.status-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+.dot.warn {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent);
+}
+.dot.bad {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent);
+}
+.dot.spin {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.body {
+  display: grid;
+  grid-template-columns: 1fr var(--detail-w);
+  min-height: 0;
+}
+.app.panel-closed .body { grid-template-columns: 1fr; }
+.app.panel-closed .detail { display: none; }
+
+.canvas-wrap {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 1px 1px, #1a2230 1px, transparent 0) 0 0 / 22px 22px;
+}
+
+.banner {
+  display: none;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 3;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.banner.delayed { border-color: #5a4a20; background: #221e12; color: #f6d98a; }
+.banner.disconnected { border-color: #5a3035; background: #241618; color: #f5b0b4; }
+.app[data-state="delayed"] .banner.delayed,
+.app[data-state="disconnected"] .banner.disconnected { display: flex; }
+
+.empty-canvas,
+.loading-canvas {
+  display: none;
+  position: absolute;
+  inset: 0;
+  place-items: center;
+  text-align: center;
+  color: var(--muted);
+  z-index: 2;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.app[data-state="empty"] .empty-canvas { display: grid; }
+.app[data-state="loading"] .loading-canvas { display: grid; }
+.app[data-state="empty"] .graph,
+.app[data-state="loading"] .graph { opacity: 0.15; pointer-events: none; }
+
+svg.graph { width: 100%; height: 100%; display: block; }
+
+.edge {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 2.5;
+  cursor: pointer;
+  stroke-linecap: round;
+}
+.edge.group {
+  stroke: color-mix(in srgb, var(--group) 65%, var(--edge));
+  stroke-dasharray: 6 5;
+}
+.edge.dm {
+  stroke: color-mix(in srgb, var(--dm) 45%, var(--edge));
+}
+.edge.selected {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 50%, transparent));
+}
+.edge.sending {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  animation: edgeBlink 0.7s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+@keyframes edgeBlink {
+  0%, 100% { opacity: 1; stroke-width: 3.5; }
+  50% { opacity: 0.25; stroke-width: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge.sending { animation: none; opacity: 1; stroke-dasharray: 4 3; }
+  .node.sending .card { animation: none; }
+  .dot.spin { animation: none; }
+}
+.edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.edge-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+.edge-label.group { fill: var(--group); }
+.edge-label.sending { fill: var(--accent); }
+
+.node { cursor: pointer; }
+.node .card {
+  fill: var(--bg-elev);
+  stroke: #3d4a63;
+  stroke-width: 1.5;
+}
+.node.selected .card,
+.node:hover .card {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 35%, transparent));
+}
+.node.sending .card {
+  stroke: var(--accent);
+  animation: nodePulse 0.7s ease-in-out infinite;
+}
+@keyframes nodePulse {
+  50% { filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent)); }
+}
+.node .name { fill: var(--fg); font-size: 12px; font-weight: 700; }
+.node .status { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+.node.sending .status { fill: var(--accent); }
+.node .role {
+  fill: #6b7687;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pulse-dot { fill: var(--ok); }
+.app[data-state="delayed"] .pulse-dot { fill: var(--warn); }
+.app[data-state="disconnected"] .pulse-dot { fill: var(--bad); }
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-height: 0;
+}
+.detail-head { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.detail-head h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.detail-head .sub { color: var(--muted); font-size: 12px; }
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.tag.dm { color: var(--dm); border-color: #3d3560; }
+.tag.group { color: var(--group); border-color: #2a4a66; }
+.close {
+  float: right;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+.close:hover { color: var(--fg); }
+.sending-banner {
+  display: none;
+  margin: 10px 14px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #2a4a66;
+  background: #121c28;
+  color: var(--accent);
+  font-size: 12px;
+}
+.app[data-sending="on"] .sending-banner { display: block; }
+.msgs {
+  overflow: auto;
+  padding: 12px 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.msg {
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.msg-from { font-weight: 600; }
+.msg-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.prio {
+  color: var(--priority);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid #5a342c;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.placeholder {
+  color: var(--muted);
+  padding: 24px 12px;
+  text-align: center;
+}

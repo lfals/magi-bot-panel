@@ -20,7 +20,7 @@ Rede **100% privada**. Sem Cloudflare Tunnel, Funnel ou porta pública.
 2. Subir Compose: `docker compose -f deploy/docker-compose.yml --env-file .env up -d`.
 3. Confirmar que as portas **não** escutam em `0.0.0.0` público (`ss -tlnp` / firewall).
 4. MagicDNS: documentar hostname estável (ex. `magi`) e URL de ingest:
-   `http://magi.<tailnet>.ts.net:8787/v1/events` (ou IP `100.x`).
+   `http://magi.tailcfeeb7.ts.net:8787/v1/events` (ou IP `100.77.52.14`; alias MagicDNS `magi`).
 
 ## Box (collector / emit)
 

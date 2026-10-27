@@ -1,0 +1,529 @@
+openapi: 3.1.0
+info:
+  title: Magi Bot Panel API
+  version: 0.2.0
+  description: |
+    API local (Tailscale-only) do painel Magi de conversas entre bots (L2S-43).
+    ADR-002 rev.4 — ingest tipado + projeção grafo (agents/edges) + WebSocket.
+    Sem superfície pública. Sem POST /v1/presence.
+servers:
+  - url: http://{magi_host}:8787
+    description: Magi via Tailscale / localhost (Compose default; override with BIND_ADDR)
+    variables:
+      magi_host:
+        default: magi
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      operationId: healthz
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /v1/events:
+    post:
+      summary: Ingest tipado (message | edge.sending | agent.status | agent.heartbeat)
+      operationId: ingestEvent
+      security:
+        - HmacSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/IngestMessage"
+                - $ref: "#/components/schemas/IngestEdgeSending"
+                - $ref: "#/components/schemas/IngestAgentStatus"
+                - $ref: "#/components/schemas/IngestAgentHeartbeat"
+              discriminator:
+                propertyName: type
+      responses:
+        "202":
+          description: Aceito
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/graph:
+    get:
+      summary: Snapshot do grafo (agents + edges) para canvas UX v7
+      operationId: getGraph
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphSnapshot"
+
+  /v1/agents:
+    get:
+      summary: Lista/status dos agentes (nós)
+      operationId: listAgents
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Agent"
+
+  /v1/channels:
+    get:
+      summary: Lista canais (DM + group)
+      operationId: listChannels
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelList"
+
+  /v1/channels/{channelId}:
+    get:
+      summary: Meta de um canal
+      operationId: getChannel
+      parameters:
+        - $ref: "#/components/parameters/channelId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/channels/{channelId}/messages:
+    get:
+      summary: Timeline do drawer (read-only)
+      operationId: listMessages
+      parameters:
+        - $ref: "#/components/parameters/channelId"
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: before
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageList"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/stream:
+    get:
+      summary: WebSocket — message | edge.sending | edge.idle | agent.status | hello | ping
+      operationId: stream
+      description: |
+        Upgrade WebSocket. Frames JSON:
+        - `hello` — no connect
+        - `ping` — keepalive (~25s)
+        - `message` — MessageEvent; também limpa `sending` da aresta
+        - `edge.sending` — `{type, channel_id, from_agent_id}` (presença do frame = active)
+        - `edge.idle` — clear de blink (TTL server ~12s ou após `message`)
+        - `agent.status` — `{type, agent_id, status, status_text}`
+        Token opcional `?token=` / Bearer se `MAGI_PANEL_TOKEN` setado.
+      responses:
+        "101":
+          description: Switching Protocols
+
+components:
+  securitySchemes:
+    HmacSignature:
+      type: apiKey
+      in: header
+      name: X-L2S-Signature
+      description: |
+        HMAC-SHA256 do body raw. Headers:
+        - `X-L2S-Timestamp`: unix seconds
+        - `X-L2S-Signature`: hex(hmac_sha256(secret, "{timestamp}." + raw_body))
+        Rejeitar se |now - timestamp| > 300s.
+
+  parameters:
+    channelId:
+      name: channelId
+      in: path
+      required: true
+      schema:
+        type: string
+        description: DM = sorted(agentA:agentB); group = groupId
+
+  responses:
+    BadRequest:
+      description: Payload inválido
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: HMAC inválido ou ausente
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: agent fora da allowlist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Rate limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    IngestMessage:
+      type: object
+      required: [type, channel_type, from_agent_id, body, dedupe_key, source]
+      properties:
+        type:
+          type: string
+          enum: [message]
+        event_id:
+          type: string
+          format: uuid
+        ts:
+          type: string
+          format: date-time
+        channel_type:
+          type: string
+          enum: [dm, group]
+        channel_id:
+          type: string
+        from_agent_id:
+          type: string
+        from_name:
+          type: string
+        to_agent_id:
+          type: string
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        priority:
+          type: boolean
+          default: false
+        body:
+          type: string
+          maxLength: 65536
+        source:
+          type: string
+          enum: [emit, transcript_tail, readtranscript_catchup]
+        dedupe_key:
+          type: string
+          minLength: 8
+          maxLength: 256
+
+    IngestEdgeSending:
+      type: object
+      required: [type, from_agent_id]
+      properties:
+        type:
+          type: string
+          enum: [edge.sending]
+        ts:
+          type: string
+          format: date-time
+        channel_id:
+          type: string
+        channel_type:
+          type: string
+          enum: [dm, group]
+        from_agent_id:
+          type: string
+        from_name:
+          type: string
+        to_agent_id:
+          type: string
+        group_id:
+          type: string
+        dedupe_key:
+          type: string
+
+    IngestAgentStatus:
+      type: object
+      required: [type, agent_id, status]
+      properties:
+        type:
+          type: string
+          enum: [agent.status]
+        ts:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [idle, busy, offline]
+        status_text:
+          type: string
+          description: Texto no nó retangular (UX v7)
+        dedupe_key:
+          type: string
+
+    IngestAgentHeartbeat:
+      type: object
+      required: [type, agent_id]
+      properties:
+        type:
+          type: string
+          enum: [agent.heartbeat]
+        ts:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+        name:
+          type: string
+        dedupe_key:
+          type: string
+
+    IngestResult:
+      type: object
+      required: [accepted]
+      properties:
+        accepted:
+          type: boolean
+        duplicate:
+          type: boolean
+        type:
+          type: string
+        event:
+          description: MessageEvent ou eco do evento efêmero
+
+    MessageEvent:
+      type: object
+      required:
+        - event_id
+        - ts
+        - channel_type
+        - channel_id
+        - from_agent_id
+        - body
+        - source
+        - dedupe_key
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        ts:
+          type: string
+          format: date-time
+        channel_type:
+          type: string
+          enum: [dm, group]
+        channel_id:
+          type: string
+        from_agent_id:
+          type: string
+        from_name:
+          type: string
+          nullable: true
+        to_agent_id:
+          type: string
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        priority:
+          type: boolean
+        body:
+          type: string
+        source:
+          type: string
+          enum: [emit, transcript_tail, readtranscript_catchup]
+        dedupe_key:
+          type: string
+
+    Agent:
+      type: object
+      required: [agent_id, name, status, status_text]
+      properties:
+        agent_id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [idle, busy, offline]
+        status_text:
+          type: string
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Edge:
+      type: object
+      required: [channel_id, channel_type, participant_ids, sending]
+      properties:
+        channel_id:
+          type: string
+        channel_type:
+          type: string
+          enum: [dm, group]
+        participant_ids:
+          type: array
+          items:
+            type: string
+        label:
+          type: string
+        last_message_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_preview:
+          type: string
+        sending:
+          type: boolean
+        sending_from_agent_id:
+          type: string
+          nullable: true
+
+    GraphSnapshot:
+      type: object
+      required: [agents, edges]
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
+
+    Channel:
+      type: object
+      required: [channel_id, channel_type, last_ts, last_preview]
+      properties:
+        channel_id:
+          type: string
+        channel_type:
+          type: string
+          enum: [dm, group]
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              agent_id:
+                type: string
+              name:
+                type: string
+        group_id:
+          type: string
+          nullable: true
+        label:
+          type: string
+        last_ts:
+          type: string
+          format: date-time
+        last_preview:
+          type: string
+        message_count:
+          type: integer
+
+    ChannelList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
+        next_cursor:
+          type: string
+          nullable: true
+
+    MessageList:
+      type: object
+      required: [channel_id, items]
+      properties:
+        channel_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageEvent"
+        next_before:
+          type: string
+          format: date-time
+          nullable: true
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
